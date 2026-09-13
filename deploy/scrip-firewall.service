@@ -1,0 +1,65 @@
+[Unit]
+Description=scrip nftables ruleset and ban export
+Before=scrip.service
+# Load after firewall services that flush the ruleset, including Debian's
+# nftables.service, so their startup does not remove the scrip table.
+After=nftables.service firewalld.service
+# Those services start by flushing the whole ruleset, which takes the scrip
+# table with it. PartOf re-runs this unit when they restart, and the reload
+# propagation plus ExecReload covers `systemctl reload nftables`, which
+# would otherwise leave the port unprotected until the next boot.
+PartOf=nftables.service firewalld.service
+ReloadPropagatedFrom=nftables.service firewalld.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/scrip.conf
+# Runs as root: nft needs CAP_NET_ADMIN. Export to a file first so a failing
+# export fails the unit instead of nft silently loading empty stdin (a pipeline
+# reports only nft's exit status). The config carries db_path, so the export
+# follows an operator who moved the database.
+ExecStart=/bin/sh -c 'set -e; /usr/bin/scrip ban export --config /etc/scrip/scrip.toml > /run/scrip/bans.nft; /usr/sbin/nft -f /run/scrip/bans.nft'
+ExecReload=/usr/sbin/nft -f /etc/nftables.d/scrip.conf
+ExecReload=/bin/sh -c 'set -e; /usr/bin/scrip ban export --config /etc/scrip/scrip.toml > /run/scrip/bans.nft; /usr/sbin/nft -f /run/scrip/bans.nft'
+NoNewPrivileges=yes
+# All nft needs to talk to the kernel's netfilter tables.
+CapabilityBoundingSet=CAP_NET_ADMIN
+ProtectSystem=strict
+# ProtectSystem=strict leaves /run read-only; this is the one writable spot,
+# and it is where the ban export lands.
+RuntimeDirectory=scrip
+# `scrip ban export` opens the database read-write (WAL needs to create the
+# -shm file), so strict confinement would fail it outright. Leading `-`: the
+# path does not exist until scrip has run once. An operator who moves db_path
+# out of the state directory must mirror it here.
+ReadWritePaths=-/var/lib/scrip
+# Resolve relative db_path values as scrip.service does. A wrong working
+# directory would find no database and silently export no bans.
+WorkingDirectory=/var/lib/scrip
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# AF_NETLINK is how nft reaches the kernel.
+RestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# The export is the list of banned CIDRs; at root's default 0022 it would be
+# world-readable to every local user.
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

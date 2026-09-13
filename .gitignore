@@ -1,0 +1,20 @@
+/target
+*.db
+*.db-shm
+*.db-wal
+
+# Local repo metadata: GitHub description, topics, social preview source.
+/repo-meta.md
+/docs/img/social.png
+
+# Local demo state
+.scrip-demo
+
+# Planning artifacts, kept on disk while work is in flight.
+/docs/superpowers/
+
+.playwright-mcp/
+.serena/
+.superpowers/
+.agents/
+/skills-lock.json

@@ -1,0 +1,194 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # v2.3.1
+        with:
+          tool: cargo-fuzz
+      - name: Verify the fuzz lockfile is current
+        working-directory: fuzz
+        run: cargo metadata --locked --format-version 1 > /dev/null
+      - name: List fuzz targets as JSON
+        id: list
+        working-directory: fuzz
+        run: |
+          set -euo pipefail
+          json=$(cargo fuzz list | jq -R . | jq -sc .)
+          echo "targets=$json" >> "$GITHUB_OUTPUT"
+
+  fuzz-long:
+    needs: fuzz-targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.fuzz-targets.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target\nfuzz -> target"
+          key: ${{ matrix.target }}
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # v2.3.1
+        with:
+          tool: cargo-fuzz
+      - name: Restore corpus cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+      - name: Fuzz long (30m)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run "${{ matrix.target }}" -- -max_total_time=1800
+
+  property-10x:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test
+        env:
+          PROPTEST_CASES: 2560
+
+  soak:
+    runs-on: ubuntu-latest
+    # Bounded so a wedged run is a red job in minutes, not GitHub's 6h default.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --release --test load -- --ignored soak_ten_minutes
+
+  load-smoke:
+    runs-on: ubuntu-latest
+    # Bounded so a wedged run is a red job in minutes, not GitHub's 6h default.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --release --test load -- --ignored load_smoke
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --release
+      - name: Prepare volume
+        run: |
+          set -euo pipefail
+          mkdir -p smoke/data
+          cat > smoke/scrip.toml <<'EOF'
+          listen_tcp = ["0.0.0.0:9999"]
+          listen_http = ["0.0.0.0:8080"]
+          base_url = "http://127.0.0.1:8080"
+          db_path = "/data/scrip.db"
+          EOF
+          cp target/release/scrip smoke/scrip
+      - name: Start container
+        run: |
+          set -euo pipefail
+          docker run -d --name scrip-smoke \
+            -p 9999:9999 -p 8080:8080 \
+            -v "$PWD/smoke/scrip:/usr/local/bin/scrip:ro" \
+            -v "$PWD/smoke/scrip.toml:/etc/scrip/scrip.toml:ro" \
+            -v "$PWD/smoke/data:/data" \
+            ubuntu:24.04 \
+            /usr/local/bin/scrip run
+      - name: Wait for healthz
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 30))
+          until curl -fsS "http://127.0.0.1:8080/healthz" >/dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "healthz did not come up in time" >&2
+              docker logs scrip-smoke || true
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Paste, fetch, and byte-compare
+        run: |
+          set -euo pipefail
+          payload="container-smoke-$(date +%s)"
+          reply=$(
+            exec 3<>/dev/tcp/127.0.0.1/9999
+            printf '%s' "$payload" >&3
+            timeout 10 cat <&3
+          )
+          url=$(printf '%s' "$reply" | tr -d '\r\n')
+          raw_url="${url%/*}/raw/${url##*/}"
+          echo "paste url: $url"
+          fetched=$(curl -fsS "$raw_url")
+          if [ "$fetched" != "$payload" ]; then
+            echo "byte mismatch: sent [$payload] got [$fetched]" >&2
+            exit 1
+          fi
+          echo "SMOKE_URL=$raw_url" >> "$GITHUB_ENV"
+          echo "SMOKE_PAYLOAD=$payload" >> "$GITHUB_ENV"
+      - name: Stop container and check clean exit
+        run: |
+          set -euo pipefail
+          docker stop -s SIGTERM scrip-smoke
+          status=$(docker inspect scrip-smoke --format '{{.State.ExitCode}}')
+          if [ "$status" != "0" ]; then
+            echo "container exited with $status" >&2
+            docker logs scrip-smoke || true
+            exit 1
+          fi
+          docker rm scrip-smoke
+      - name: Restart and verify paste survived
+        run: |
+          set -euo pipefail
+          docker run -d --name scrip-smoke-2 \
+            -p 9999:9999 -p 8080:8080 \
+            -v "$PWD/smoke/scrip:/usr/local/bin/scrip:ro" \
+            -v "$PWD/smoke/scrip.toml:/etc/scrip/scrip.toml:ro" \
+            -v "$PWD/smoke/data:/data" \
+            ubuntu:24.04 \
+            /usr/local/bin/scrip run
+          deadline=$((SECONDS + 30))
+          until curl -fsS "http://127.0.0.1:8080/healthz" >/dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "healthz did not come up in time" >&2
+              docker logs scrip-smoke-2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Verify paste survived restart
+        run: |
+          set -euo pipefail
+          fetched=$(curl -fsS "$SMOKE_URL")
+          if [ "$fetched" != "$SMOKE_PAYLOAD" ]; then
+            echo "paste did not survive restart: expected [$SMOKE_PAYLOAD] got [$fetched]" >&2
+            exit 1
+          fi
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f scrip-smoke scrip-smoke-2 >/dev/null 2>&1 || true

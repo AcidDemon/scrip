@@ -1,0 +1,8 @@
+# Only compile inputs enter the build context.
+**
+!Cargo.toml
+!Cargo.lock
+!src/
+!src/**
+!assets/
+!assets/**

@@ -1,0 +1,10 @@
+[load_smoke]
+paste_connections = 500
+http_reads = 1000
+p99_ms = 500
+max_rss_mib = 256
+
+[soak]
+minutes = 10
+max_rss_growth_mib = 32
+max_fd_growth = 16

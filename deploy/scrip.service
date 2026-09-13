@@ -1,0 +1,69 @@
+[Unit]
+Description=scrip pastebin
+After=network-online.target scrip-firewall.service
+Wants=network-online.target scrip-firewall.service
+# Never latch permanently failed (e.g. repeated OOM kills); Restart+RestartSec pace retries.
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/scrip run --config /etc/scrip/scrip.toml
+User=scrip
+Group=scrip
+# The app-default db_path is relative; resolve it in the state dir.
+WorkingDirectory=/var/lib/scrip
+Restart=on-failure
+RestartSec=5
+# 10s connection drain + 1s per spawned task, and task count is
+# listen_tcp.len() + listen_http.len() + 3, so the shipped defaults (2 + 1 + 3)
+# already need 16s.
+TimeoutStopSec=45
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+StateDirectory=scrip
+# Paste bodies and any ban table are readable only by the service user.
+StateDirectoryMode=0700
+# Needs systemd 256+; on older systemd use PrivateUsers=yes instead.
+PrivateUsers=self
+RemoveIPC=yes
+# max_conns (1024) x max_paste_bytes (512KiB) = 512MiB, but a paste is held as
+# the request body, a copy, and under encrypt_at_rest a sealed copy, so worst
+# case is ~1.5GiB of intake buffers + SQLite cache + runtime.
+MemoryMax=2G
+LimitNOFILE=8192
+SystemCallFilter=@system-service
+# Additive: narrows the allow-list above, since @system-service still admits
+# resource-tuning, privileged and obsolete calls scrip never makes.
+SystemCallFilter=~@resources @privileged @obsolete
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+UMask=0077
+# A core dump would write paste plaintext, and any at-rest encryption keys
+# derived from the URLs in flight, to disk in a file no takedown touches.
+LimitCORE=0
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallArchitectures=native
+# Must stay above tokio's blocking pool (up to 512 threads) + runtime workers,
+# or a load burst turns into pthread_create failures and a crash loop.
+TasksMax=640
+# Matches the default listen ports; operators changing ports must mirror them here.
+SocketBindDeny=any
+SocketBindAllow=tcp:9999
+SocketBindAllow=tcp:8080
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,101 @@
+body { margin: 0; background: #0d1117; }
+pre { margin: 0; }
+code {
+  display: block;
+  padding: 1rem 1.25rem 4rem;
+  min-height: 100vh;
+  box-sizing: border-box;
+  font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* id beats the theme sheets' pre code.hljs padding, whatever their order */
+#c { padding: 1rem 1.25rem 4rem; }
+/* The hljs themes ship `pre code.hljs { overflow-x: auto }`, which turns this
+   into a scroll container whose scrollbar sits at the bottom of a 100vh box,
+   below the fold and behind the status bar. Let the document scroll instead. */
+#c { overflow-x: visible; }
+/* The document scrolls, not this element: #c is min-height 100vh, so its own
+   scrollbar sits at the bottom of a full-viewport box, under the status bar
+   and out of reach. */
+#c.nowrap { white-space: pre; }
+/* Status line: same vernacular as the code above it. Unselectable, so
+   select-all copies only the paste. */
+#bar {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 1.25rem;
+  font: 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  user-select: none;
+  -webkit-user-select: none;
+  border-top: 1px solid;
+  z-index: 1;
+}
+#grow { flex: 1; }
+#facts { opacity: 0.65; display: flex; gap: 0.5rem; align-items: center; }
+#facts .warn { color: #f0883e; }
+.sep { width: 1px; height: 15px; background: currentColor; opacity: 0.25; }
+/* narrow: drop labels, keep icons */
+@media (max-width: 700px) { .lbl { display: none; } #facts .opt { display: none; } }
+#swatch { opacity: 0.65; flex: none; }
+#bar button, #bar a {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid;
+  border-radius: 3px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  opacity: 0.8;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  text-decoration: none;
+}
+#bar button:hover, #bar a:hover, #bar button:focus-visible, #bar a:focus-visible { opacity: 1; }
+#bar svg { width: 12px; height: 12px; flex: none; }
+#copy.done { opacity: 1; color: #7ee787; border-color: #7ee787; }
+#copy.failed { opacity: 1; color: #f85149; border-color: #f85149; }
+#copy.done svg, #copy.failed svg { display: none; }
+#wraptoggle.off, #linestoggle.off { opacity: 0.35; }
+#themepick {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.8;
+  padding-right: 0.1rem;
+}
+#themepick:hover, #themepick:focus-visible { opacity: 1; }
+#themepick option, #themepick optgroup { color: initial; }
+#langpick option, #langpick optgroup { color: initial; }
+/* The separator is an optgroup label, and those render bold, which makes the
+   rule wider per character than the options it sits between. */
+#langpick optgroup { font-weight: normal; }
+/* Line numbers live in pseudo-elements: never part of selection or copy. */
+/* Lines are always blocks: the wrapper strips the newlines, so block
+   boxes are what breaks lines whether numbers are shown or not. */
+#c .line { display: block; position: relative; }
+#c { counter-reset: line; }
+#c .line::before {
+  counter-increment: line;
+  content: counter(line);
+  position: absolute;
+  left: 0;
+  width: 2.6rem;
+  text-align: right;
+  opacity: 0.35;
+}
+
+#c .line:empty::after { content: " "; } /* keep empty lines one row tall */
+/* Numbers are always laid out, so a #L7 anchor lands even with them hidden. */
+#c .line { padding-left: 3.4rem; }
+#c:not(.lines) .line::before { visibility: hidden; }
+#c .line::before { cursor: pointer; }
+#c .line:hover::before { opacity: 0.8; }
+#c .line.hit { background: rgba(187, 128, 9, 0.16); box-shadow: inset 2px 0 0 #bb8009; }
+#c .line.hit::before { opacity: 0.95; color: #bb8009; }

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # cargo-deb's generated snippet below enables the units but does not run
+    # systemd-sysusers; the scrip user must exist before scrip.service can start.
+    systemd-sysusers scrip.conf
+    # scrip.service runs as User=scrip and must be able to read the 0640 config.
+    chgrp scrip /etc/scrip/scrip.toml
+fi
+
+#DEBHELPER#

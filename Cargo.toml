@@ -1,0 +1,58 @@
+[workspace]
+exclude = ["fuzz"]
+
+[package]
+name = "scrip"
+version = "0.1.0"
+description = "Self-hosted terminal pastebin: pipe into a TCP port, get a link back"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[package.metadata.deb]
+maintainer = "acid <c.schlueter@acidnetworks.net>"
+copyright = "2026 scrip contributors"
+license-file = "LICENSE"
+extended-description = """\
+scrip is a self-hosted terminal pastebin: pipe anything into a TCP port, get \
+a link back, read it in a browser with syntax highlighting. One static \
+binary, one SQLite file, one config file, with connection, size, and storage \
+caps plus IP bans and auto-bans backed by an nftables ruleset."""
+depends = "$auto, nftables, systemd"
+section = "net"
+priority = "optional"
+conf-files = ["/etc/nftables.d/scrip.conf", "/etc/scrip/scrip.toml"]
+maintainer-scripts = "deploy/debian"
+assets = [
+    ["target/release/scrip", "usr/bin/", "755"],
+    ["deploy/nftables-scrip.conf", "etc/nftables.d/scrip.conf", "644"],
+    ["deploy/scrip.toml.example", "etc/scrip/scrip.toml", "640"],
+    ["deploy/sysusers-scrip.conf", "usr/lib/sysusers.d/scrip.conf", "644"],
+    ["deploy/README.md", "usr/share/doc/scrip/README.md", "644"],
+]
+# Units are enabled but not started: the operator edits /etc/scrip/scrip.toml first.
+systemd-units = [
+    { unit-scripts = "deploy", unit-name = "scrip", enable = true, start = false },
+    { unit-scripts = "deploy", unit-name = "scrip-firewall", enable = true, start = false },
+]
+
+[dependencies]
+axum = "0.8"
+chacha20poly1305 = "0.10"
+clap = { version = "4", features = ["derive"] }
+getrandom = "0.3"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
+ipnet = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+socket2 = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "signal", "macros"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"

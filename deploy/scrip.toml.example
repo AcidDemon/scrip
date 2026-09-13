@@ -1,0 +1,48 @@
+# scrip configuration. Every key has a built-in default; uncommented values
+# below override it. Full key reference: the root README, or
+# /usr/share/doc/scrip/README.md on a package install.
+
+base_url = "https://paste.example.com"
+db_path = "/var/lib/scrip/scrip.db"
+
+# Changing these means mirroring the ports into scrip.service's SocketBindAllow
+# lines. A mismatch is a bind failure, and Restart=on-failure with
+# StartLimitIntervalSec=0 turns that into an endless crash loop.
+#listen_tcp = ["[::]:9999", "0.0.0.0:9999"]
+#listen_http = ["127.0.0.1:8080"]
+#max_paste_bytes = 524288
+#quota_bytes = 1073741824
+#retention_days = 30
+#rate_per_minute = 6.0
+#rate_burst = 5.0
+#read_rate_per_min = 120.0
+#read_burst = 60.0
+#max_conns = 1024
+#max_conns_per_source = 12
+#idle_timeout_secs = 5
+#total_deadline_secs = 30
+#gc_interval_secs = 3600
+#ban_reload_secs = 10
+#autoban_threshold = 20
+#autoban_window_secs = 60
+#autoban_minutes = 30
+#autoban_factor = 2.0
+#autoban_max_minutes = 1440
+#autoban_forget_days = 7
+#max_pastes_per_source = 100
+
+# Encrypt new paste bodies with a key derived from each paste's URL; the URL
+# is never stored, so those bodies are unreadable in the database and in
+# backups without the links. Pastes written before you turn this on stay
+# plaintext. Not end-to-end: the server sees plaintext on every write and
+# read. Turning it on also flips the unset log_pastes default to "off".
+#encrypt_at_rest = false
+
+# "url" logs the stored id, "full" adds the author IP, "off" only the size.
+# Default: "url", or "off" when encrypt_at_rest is on.
+#log_pastes = "url"
+
+# Offered on the landing page for takedowns and abuse reports. The page
+# splits it into two halves and joins them in the browser, so it is not
+# sitting in the HTML for a scraper to lift. Unset hides the contact line.
+#contact_email = "abuse@example.com"

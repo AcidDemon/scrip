@@ -1,0 +1,51 @@
+[package]
+name = "scrip-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+scrip = { path = ".." }
+tokio = { version = "1", features = ["rt", "io-util", "time", "macros"] }
+toml = "0.8"
+http = "1"
+
+[[bin]]
+name = "fuzz-protocol"
+path = "fuzz_targets/fuzz_protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz-slug-path"
+path = "fuzz_targets/fuzz_slug_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz-config"
+path = "fuzz_targets/fuzz_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz-duration"
+path = "fuzz_targets/fuzz_duration.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz-xff"
+path = "fuzz_targets/fuzz_xff.rs"
+test = false
+doc = false
+bench = false
