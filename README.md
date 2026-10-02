@@ -64,6 +64,13 @@ curl --data-binary @main.rs https://paste.example.com/
 
 Both write paths return the same thing, a URL on stdout.
 
+The TCP port refuses what port scanners send to identify a service: an HTTP,
+RTSP or SIP request line ending in CRLF, a TLS ClientHello, a lone SSH version
+line, and nmap's standard probes byte for byte. Those get a
+`scrip: refused ... probe` line back and nothing is stored. A body of nothing
+but whitespace is dropped without a reply. To paste one of these on purpose,
+put any line in front of it, or upload it with curl as above.
+
 ## Read
 
 `https://paste.example.com/<slug>` is the viewer. Language detection is
@@ -88,8 +95,8 @@ Pastes expire after 30 days by default.
 ## Per-paste options
 
 HTTP uploads accept options in the query string. TCP uploads use the defaults:
-the protocol treats everything up to EOF as paste content, including any text
-that looks like an option.
+the protocol has no options, so text that looks like one is paste content like
+the rest.
 
 ```sh
 curl --data-binary @debug.log 'https://paste.example.com/?ttl=2h'

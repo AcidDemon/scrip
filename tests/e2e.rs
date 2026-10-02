@@ -220,8 +220,10 @@ fn paste_roundtrip_returns_url_and_stores_exact_bytes() {
 #[test]
 fn empty_paste_stores_nothing() {
     let sv = start("");
-    let reply = paste(sv.port, b"");
-    assert_eq!(reply, "");
+    // whitespace alone is what scanners send to make a port talk
+    for body in [&b""[..], b"\r\n", b"\r\n\r\n", b" \t\n"] {
+        assert_eq!(paste(sv.port, body), "", "body: {body:?}");
+    }
     let conn = rusqlite::Connection::open(sv._dir.path().join("e2e.db")).unwrap();
     let n: i64 = conn
         .query_row("SELECT COUNT(*) FROM paste", [], |r| r.get(0))
@@ -239,6 +241,24 @@ fn oversize_paste_is_refused_and_not_stored() {
         .query_row("SELECT COUNT(*) FROM paste", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 0);
+}
+
+#[test]
+fn scanner_probes_are_refused_unless_a_line_comes_first() {
+    let sv = start("");
+    for probe in [&b"GET / HTTP/1.0\r\n\r\n"[..], b"JRMI\0\x02K"] {
+        let reply = paste(sv.port, probe);
+        assert!(reply.starts_with("scrip: refused"), "reply: {reply:?}");
+    }
+    let conn = rusqlite::Connection::open(sv._dir.path().join("e2e.db")).unwrap();
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM paste", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 0);
+    let body = b"#\nGET / HTTP/1.0\r\n\r\n";
+    let reply = paste(sv.port, body);
+    assert!(reply.starts_with("https://e2e.local/"), "reply: {reply:?}");
+    assert_eq!(db_body(&sv, slug_of(&reply)).unwrap(), body);
 }
 
 #[test]

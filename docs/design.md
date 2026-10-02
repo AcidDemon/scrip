@@ -47,7 +47,8 @@ One binary with subcommands: `scrip run`, `scrip ban`, `scrip rm`, `scrip gc`.
 
 Both upload paths go through `intake::store_paste`, which runs the quota check
 and the insert. There is no code path that stores a paste without passing the
-ban check, the rate limiter, the size cap, and the quota, in that order.
+ban check, the rate limiter, the size cap, and the quota, in that order. The TCP
+path also runs the probe check, between the size cap and the quota.
 
 ## Wire protocol
 
@@ -67,7 +68,26 @@ On success the server writes `<base_url>/<slug>\n` with no trailing NUL (fiche
 sends one), shuts down its write side, drains whatever the client is still
 sending, and closes. Draining matters: closing with unread bytes in the socket
 makes the kernel send RST instead of FIN, and an RST discards the reply that is
-still in flight. A read of zero bytes stores nothing.
+still in flight. A read of zero bytes, or of whitespace alone, stores nothing
+and gets no reply.
+
+Scanners connect, send a probe and wait for an answer. Stored as is, every
+probe would become a paste, so the TCP path refuses a body that is one of:
+
+- a request line ending in CRLF, `METHOD target HTTP/x.y` or the same with
+  `RTSP/` or `SIP/`, which covers browsers, the HTTP/2 preface, and nmap's
+  HTTP, RTSP and SIP probes
+- a TLS ClientHello record, or an SSLv2-compatible ClientHello
+- an SSH version line with nothing after it
+- a byte-for-byte copy of one of nmap's default-intensity TCP probes
+
+The reply is `scrip: refused <kind> probe; prepend a line to paste it anyway`,
+and the log line names the kind and the source, never the bytes. Every rule
+starts matching at the first byte, so any line in front of the body, even an
+empty one, gets it through. The request-line rule wants CRLF because a
+terminal sends LF. A refusal adds no auto-ban strike, and there is no setting
+for the check. The HTTP path has none of this: a POST body that looks like a
+request is ordinary content there.
 
 ## Storage
 
@@ -227,8 +247,8 @@ it.
 
 | layer | what it covers |
 | --- | --- |
-| unit | slug charset and length, token bucket arithmetic, CIDR matching, config precedence, ban expiry |
-| property (proptest) | any chunking reassembles byte-identical, slug distribution passes chi-square, the bucket never exceeds burst or goes negative, CIDR containment agrees with a reference implementation |
+| unit | slug charset and length, token bucket arithmetic, CIDR matching, config precedence, ban expiry, scanner probe classification |
+| property (proptest) | any chunking reassembles byte-identical, slug distribution passes chi-square, the bucket never exceeds burst or goes negative, CIDR containment agrees with a reference implementation, a leading line always disarms the probe check |
 | integration | store against a temp DB: concurrent inserts on the PRIMARY KEY, quota refusal at the boundary, the reaper deleting exactly the expired rows |
 | API contract | the router on an ephemeral port: status codes, content types, CSP and nosniff on every response, the slug gate, 413 on oversize bodies |
 | end-to-end | the release binary as a child process, driven over real sockets, including misbehaving clients, SIGTERM mid-connection, and every startup failure mode |

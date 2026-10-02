@@ -12,7 +12,7 @@ use crate::policy::{
     escalated_minutes, source_key, source_key48, Admit, BanList, RateLimiter, ViolationTracker,
     AGGREGATE_FACTOR,
 };
-use crate::protocol::{read_paste, ReadOutcome};
+use crate::protocol::{probe_kind, read_paste, ReadOutcome};
 use crate::slug::{random_base36, SLUG_LEN};
 use crate::store::{RoomOutcome, Store, ROW_OVERHEAD};
 
@@ -566,7 +566,7 @@ pub async fn store_paste(
 }
 
 async fn handle(mut stream: TcpStream, ip: IpAddr, ctx: Arc<Ctx>) {
-    // Policy order: ban, rate, size (inside the read), quota.
+    // Policy order: ban, rate, size (inside the read), probe, quota.
     if ctx.bans.is_banned(ip, now_epoch()) {
         return; // banned sources get silence, not a protocol
     }
@@ -607,8 +607,21 @@ async fn handle(mut stream: TcpStream, ip: IpAddr, ctx: Arc<Ctx>) {
             reply_and_close(&mut stream, msg.as_bytes()).await;
             return;
         }
+        // Blank lines are what scanners send to make a quiet service talk.
+        // Like an empty read, they store nothing and get no reply.
+        ReadOutcome::Complete(b) if b.trim_ascii().is_empty() => return,
         ReadOutcome::Complete(b) => Arc::new(b),
     };
+
+    if let Some(kind) = probe_kind(&body) {
+        tracing::info!(
+            "refused {kind} probe from {}",
+            log_source(ctx.config.log_mode(), ip)
+        );
+        let msg = format!("scrip: refused {kind} probe; prepend a line to paste it anyway\n");
+        reply_and_close(&mut stream, msg.as_bytes()).await;
+        return;
+    }
 
     match store_paste(&ctx, ip, body, PasteOpts::default()).await {
         StoreOutcome::Stored { slug, .. } => {
