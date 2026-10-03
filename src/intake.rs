@@ -607,8 +607,7 @@ async fn handle(mut stream: TcpStream, ip: IpAddr, ctx: Arc<Ctx>) {
             reply_and_close(&mut stream, msg.as_bytes()).await;
             return;
         }
-        // Blank lines are what scanners send to make a quiet service talk.
-        // Like an empty read, they store nothing and get no reply.
+        // Scanners send blank lines; treat them like an empty read.
         ReadOutcome::Complete(b) if b.trim_ascii().is_empty() => return,
         ReadOutcome::Complete(b) => Arc::new(b),
     };

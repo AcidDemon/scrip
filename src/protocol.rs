@@ -44,15 +44,11 @@ pub async fn read_paste<R: AsyncRead + Unpin>(
     }
 }
 
-/// Names the scanner probe `body` is, if it is one. Scanners open a port,
-/// send a fixed request and wait for an answer; stored, each one would be a
-/// paste. Every rule is anchored at the first byte, so one line in front of
-/// the body, even an empty one, disarms all of them.
+/// Every rule matches from the first byte, so any leading line lets a body
+/// through.
 pub fn probe_kind(body: &[u8]) -> Option<&'static str> {
-    // A TLS record carrying a ClientHello, or an SSLv2-compatible hello: a
-    // length with the high bit set, CLIENT-HELLO, then version 2.0 or 3.x.
-    // The hello is sent alone, so its length must cover the body exactly;
-    // five fixed bytes on their own also match UTF-16 text and CBOR.
+    // An SSLv2 hello must fill the body exactly: its fixed bytes alone also
+    // match UTF-16 text and CBOR.
     let tls = match body {
         [0x16, 0x03, 0x00..=0x04, _, _, 0x01, ..] => true,
         [hi @ 0x80..=0xff, lo, 0x01, 0x00, 0x02, ..]
@@ -61,7 +57,6 @@ pub fn probe_kind(body: &[u8]) -> Option<&'static str> {
         }
         _ => false,
     };
-    // An SSH client's version line, sent alone while it waits for the server's.
     let ssh = (body.starts_with(b"SSH-2.0-") || body.starts_with(b"SSH-1."))
         && body.len() <= 255
         && body.iter().position(|&c| c == b'\n') == Some(body.len() - 1);
@@ -76,9 +71,7 @@ pub fn probe_kind(body: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// `METHOD target PROTO/d.d` and CRLF, as HTTP, RTSP and SIP clients send it.
-/// A terminal ends lines with a bare LF, so text typed or pasted there never
-/// matches.
+/// CRLF only: a terminal sends LF, so typed text never matches.
 fn request_line(body: &[u8]) -> Option<&'static str> {
     let end = body.iter().position(|&c| c == b'\n')?;
     let line = body[..end].strip_suffix(b"\r")?;
@@ -99,9 +92,7 @@ fn request_line(body: &[u8]) -> Option<&'static str> {
     })
 }
 
-/// nmap's default-intensity TCP probes (rarity 7 or less in
-/// nmap-service-probes) that the rules above miss, byte for byte. Its blank
-/// GenericLines probe never gets here: intake drops whitespace-only bodies.
+/// nmap's default-intensity (rarity <= 7) TCP probes the rules above miss.
 const NMAP_PROBES: &[&[u8]] = &[
     // RPCCheck
     b"\x80\0\0(r\xfe\x1d\x13\0\0\0\0\0\0\0\x02\0\x01\x86\xa0\0\x01\x97|\0\0\0\0\0\0\0\0\0\0\0\
@@ -261,7 +252,6 @@ mod tests {
     fn probe_gate() {
         let chrome = b"GET / HTTP/1.1\r\nHost: 203.0.113.5:9999\r\nConnection: keep-alive\r\n\
             User-Agent: Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0 Safari/537.36\r\n\r\n";
-        // SSLv2, then nmap's SSLv23SessionReq, each as long as its header says
         let mut sslv2 = b"\x80\x2e\x01\0\x02\0\x15".to_vec();
         sslv2.resize(0x2e + 2, 0);
         let mut sslv23 = b"\x80\x9e\x01\x03\x01\0u".to_vec();
@@ -280,7 +270,6 @@ mod tests {
                 b"OPTIONS sip:nm SIP/2.0\r\nVia: SIP/2.0/TCP nm;branch=foo\r\n",
                 "SIP",
             ),
-            // nmap's SSLSessionReq and TLSSessionReq heads, then TLS 1.2 and 1.3
             (b"\x16\x03\0\0S\x01\0\0O\x03\0", "TLS"),
             (b"\x16\x03\0\0i\x01\0\0e\x03\x03", "TLS"),
             (b"\x16\x03\x01\x02\0\x01\0\x01\xfc\x03\x03", "TLS"),
@@ -297,7 +286,6 @@ mod tests {
             assert_eq!(probe_kind(body), Some("scanner"), "{body:?}");
         }
         for body in [
-            // a terminal sends LF
             &b"GET /api HTTP/1.1\n"[..],
             b"GET / HTTP/1.0\nHost: x\n\nnotes\n",
             b"get / http/1.0\r\n\r\n",
@@ -307,12 +295,10 @@ mod tests {
             b"fn main() {}\n\x00binary too\xff",
             b"\x1f\x8b\x08\0\0\0\0\0\0\x03",
             b"\x7fELF\x02\x01\x01\0",
-            // high bit set, but [2] is not CLIENT-HELLO; nor is it in UTF-8 text
             b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR",
             "äöü\n".as_bytes(),
             "日本語\n".as_bytes(),
-            // an SSLv2 hello head shorter than its length says, UTF-16BE "ăn c"
-            // with a BOM, CBOR [0, 1, 0, 2], msgpack {0: 1, 3: 0}
+            // truncated SSLv2 hello, UTF-16BE text, CBOR, msgpack
             b"\x80\x2e\x01\0\x02\0\x15",
             b"\xfe\xff\x01\x03\0n\0 \0c",
             b"\x84\0\x01\0\x02",
@@ -329,8 +315,6 @@ mod tests {
     }
 
     proptest! {
-        /// The refusal tells a human to prepend a line. That has to work
-        /// whatever follows, and the gate must not panic on any input.
         #[test]
         fn a_leading_line_disarms_the_probe_gate(
             body in proptest::collection::vec(any::<u8>(), 0..512),

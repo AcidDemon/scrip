@@ -220,7 +220,6 @@ fn paste_roundtrip_returns_url_and_stores_exact_bytes() {
 #[test]
 fn empty_paste_stores_nothing() {
     let sv = start("");
-    // whitespace alone is what scanners send to make a port talk
     for body in [&b""[..], b"\r\n", b"\r\n\r\n", b" \t\n"] {
         assert_eq!(paste(sv.port, body), "", "body: {body:?}");
     }

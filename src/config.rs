@@ -6,11 +6,10 @@ use serde::Deserialize;
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/scrip/scrip.toml";
 
 /// Detail logged for stored pastes: "full" includes the stored id, size and
-/// author IP, "url" omits the IP, and "off" records only size. The size is
-/// what was uploaded, not the sealed row. Logs can outlive paste
-/// expiry and takedown. Defaults to "url", or "off" with `encrypt_at_rest`
-/// to avoid linking stored ids to request metadata. An explicit setting
-/// overrides the default; see `Config::log_mode`.
+/// author IP, "url" omits the IP, and "off" records only size. Logs can
+/// outlive paste expiry and takedown. Defaults to "url", or "off" with
+/// `encrypt_at_rest` to avoid linking stored ids to request metadata. An
+/// explicit setting overrides the default; see `Config::log_mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogPastes {
