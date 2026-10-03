@@ -233,7 +233,11 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
             let strikes = store
                 .offense_strikes()
                 .map_err(|e| format!("ban list: {e}"))?;
-            for (cidr, reason, until) in store.ban_rows().map_err(|e| format!("ban list: {e}"))? {
+            let rows = store.ban_rows().map_err(|e| format!("ban list: {e}"))?;
+            if rows.is_empty() {
+                eprintln!("no bans");
+            }
+            for (cidr, reason, until) in rows {
                 let n = strikes.get(&cidr).copied().unwrap_or(0);
                 println!(
                     "{cidr}\t{}\t{}\tstrikes={n}",

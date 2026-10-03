@@ -401,3 +401,14 @@ fn a_failed_export_prints_nothing_for_nft_to_apply() {
     assert!(!ok);
     assert_eq!(out, "", "a piped `nft -f -` would apply this");
 }
+
+#[test]
+fn an_empty_ban_list_says_so_on_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    seed(&db);
+    let (ok, out, err) = scrip(&["ban", "list"], &db);
+    assert!(ok, "{err}");
+    assert_eq!(out, "", "scripts read stdout");
+    assert_eq!(err, "no bans\n");
+}
