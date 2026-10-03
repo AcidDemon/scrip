@@ -201,7 +201,7 @@ lives at `/etc/scrip/scrip.toml` unless `--config` says otherwise.
 | `autoban_max_minutes` | `1440` | ceiling the escalation stops at |
 | `autoban_forget_days` | `7` | quiet days after which strikes reset, `0` keeps them forever |
 | `max_pastes_per_source` | `100` | live pastes one /32 or /64 may hold, `0` removes the cap |
-| `log_pastes` | `"url"`, `"off"` under encryption | success log detail: `"url"` stored id only, `"full"` id + author IP, `"off"` size only |
+| `log_pastes` | `"url"`, `"off"` under encryption | success log detail: `"url"` stored id + size, `"full"` id + size + author IP, `"off"` size only |
 | `encrypt_at_rest` | `false` | seal new pastes with a key derived from their URL |
 | `contact_email` | unset | shown on the landing page for takedowns; unset hides the line |
 

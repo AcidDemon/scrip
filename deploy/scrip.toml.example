@@ -38,7 +38,7 @@ db_path = "/var/lib/scrip/scrip.db"
 # read. Turning it on also flips the unset log_pastes default to "off".
 #encrypt_at_rest = false
 
-# "url" logs the stored id, "full" adds the author IP, "off" only the size.
+# "url" logs the stored id and size, "full" adds the author IP, "off" only the size.
 # Default: "url", or "off" when encrypt_at_rest is on.
 #log_pastes = "url"
 

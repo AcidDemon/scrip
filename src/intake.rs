@@ -397,8 +397,8 @@ fn log_source(mode: LogPastes, ip: IpAddr) -> String {
 /// Logs stored pastes according to `log_pastes` for both upload paths.
 fn stored_log_line(mode: LogPastes, slug: &str, ip: IpAddr, size: usize) -> String {
     match mode {
-        LogPastes::Full => format!("stored paste as {slug} from {ip}"),
-        LogPastes::Url => format!("stored paste as {slug}"),
+        LogPastes::Full => format!("stored paste as {slug} ({size} bytes) from {ip}"),
+        LogPastes::Url => format!("stored paste as {slug} ({size} bytes)"),
         LogPastes::Off => format!("stored a paste of {size} bytes"),
     }
 }
@@ -540,7 +540,7 @@ pub async fn store_paste(
             Ok(Ok(true)) => {
                 tracing::info!(
                     "{}",
-                    stored_log_line(ctx.config.log_mode(), &db_slug, ip, stored.len())
+                    stored_log_line(ctx.config.log_mode(), &db_slug, ip, body.len())
                 );
                 return StoreOutcome::Stored {
                     slug: url_slug,
@@ -664,10 +664,10 @@ mod tests {
         let ip: IpAddr = "203.0.113.5".parse().unwrap();
         assert_eq!(
             stored_log_line(LogPastes::Full, "abcd1234", ip, 7),
-            "stored paste as abcd1234 from 203.0.113.5"
+            "stored paste as abcd1234 (7 bytes) from 203.0.113.5"
         );
         let url = stored_log_line(LogPastes::Url, "abcd1234", ip, 7);
-        assert_eq!(url, "stored paste as abcd1234");
+        assert_eq!(url, "stored paste as abcd1234 (7 bytes)");
         assert!(!url.contains("203.0.113.5"), "url mode must not log the IP");
         let off = stored_log_line(LogPastes::Off, "abcd1234", ip, 7);
         assert_eq!(off, "stored a paste of 7 bytes");
