@@ -436,6 +436,21 @@ impl Store {
         conn.execute("DELETE FROM offense WHERE last_seen < ?1", params![cutoff])
     }
 
+    pub fn forget_offense(&self, source_key: &str) -> rusqlite::Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(conn.execute(
+            "DELETE FROM offense WHERE source_key = ?1",
+            params![source_key],
+        )? > 0)
+    }
+
+    pub fn offense_strikes(&self) -> rusqlite::Result<std::collections::HashMap<String, u32>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT source_key, strikes FROM offense")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u32)))?;
+        rows.collect()
+    }
+
     /// Live pastes only: the budget frees up as pastes expire or are deleted.
     pub fn count_by_source_key(&self, key: &str) -> rusqlite::Result<u32> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());

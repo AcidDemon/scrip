@@ -8,7 +8,8 @@
 let
   cfg = config.services.scrip;
   settingsFormat = pkgs.formats.toml { };
-  configFile = settingsFormat.generate "scrip.toml" cfg.settings;
+  # Absolute db_path: the CLI resolves a relative one from the caller's cwd.
+  configFile = settingsFormat.generate "scrip.toml" (cfg.settings // { db_path = dbPath; });
 
   # App defaults (src/config.rs) as fallbacks for the keys the units need.
   portOf = addr: lib.toInt (lib.last (lib.splitString ":" addr));
@@ -81,6 +82,9 @@ in
         home = "/var/lib/scrip";
       };
       users.groups.scrip = { };
+
+      environment.etc."scrip/scrip.toml".source = configFile;
+      environment.systemPackages = [ cfg.package ];
 
       networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall tcpPorts;
 
@@ -227,8 +231,8 @@ in
           RemainAfterExit = true;
           # Runs as root: nft needs CAP_NET_ADMIN. Export to a file first so a
           # failing export fails the unit instead of nft silently loading empty
-          # stdin. The export exits 0 and prints nothing before the first run
-          # creates the database.
+          # stdin. Before the first run creates the database, the export only
+          # flushes the sets.
           ExecStart = pkgs.writeShellScript "scrip-ban-export" ''
             set -e
             ${lib.getExe cfg.package} ban export --config ${configFile} > /run/scrip/bans.nft

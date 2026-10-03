@@ -59,10 +59,10 @@ systemctl enable scrip-firewall scrip
 
 `scrip-firewall` loads the base ruleset and then the ban export on every boot,
 before scrip starts. It runs as root: `nft` needs `CAP_NET_ADMIN`, and the
-export reads the database at `db_path`. The export only adds elements to
-`scrip_bans4` and `scrip_bans6`, never removes stale ones, so restart the unit
-to resync. Reloading the base ruleset deletes and recreates the table, so the
-export has to run after it. Timed auto-bans carry a kernel timeout
+export reads the database at `db_path`. Each export replaces the contents of
+`scrip_bans4` and `scrip_bans6`, so a reload resyncs them. Reloading the base
+ruleset deletes and recreates the table, so the export has to run after it.
+Timed auto-bans carry a kernel timeout
 and expire on their own. This ruleset is scrip-scoped only; a default-drop
 base firewall or cloud security group remains the operator's job.
 
@@ -211,9 +211,11 @@ in a drop-in under `/etc/systemd/journald.conf.d/`.
 
 ## Management
 
-Remove a paste:
+Run as root, ban changes also reload the firewall:
 ```bash
-scrip rm SLUG
+sudo scrip rm https://paste.example.com/SLUG
+sudo scrip ban list
+sudo scrip ban rm 203.0.113.9
 ```
 
 Health check:

@@ -1,11 +1,12 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 
-use scrip::cli_util::parse_duration_secs;
+use scrip::cli_util::{ban_target, expiry, parse_duration_secs, paste_ref};
 use scrip::config::Config;
 use scrip::intake::{self, Ctx};
 use scrip::store::Store;
@@ -65,7 +66,8 @@ struct BanArgs {
 enum BanCmd {
     /// Ban a CIDR, optionally purging its pastes in the same transaction
     Add {
-        cidr: ipnet::IpNet,
+        /// CIDR, or a bare address for its /32 (IPv6: its /64)
+        cidr: String,
         #[arg(long)]
         reason: Option<String>,
         /// Ban duration like 30d, 12h, 45m (default: permanent)
@@ -77,8 +79,9 @@ enum BanCmd {
         #[command(flatten)]
         db: DbArgs,
     },
-    /// Remove a ban
+    /// Remove a ban and reset that source's strikes
     Rm {
+        /// CIDR, or a bare address for its /32 (IPv6: its /64)
         cidr: String,
         #[command(flatten)]
         db: DbArgs,
@@ -88,7 +91,7 @@ enum BanCmd {
         #[command(flatten)]
         db: DbArgs,
     },
-    /// Emit the ban list as nftables add-element lines
+    /// Emit nftables commands that replace the ban sets with the stored bans
     Export {
         #[command(flatten)]
         db: DbArgs,
@@ -122,6 +125,30 @@ fn open_store(db: &DbArgs) -> Result<Store, String> {
     Store::open(&path).map_err(|e| format!("open db {}: {e}", path.display()))
 }
 
+impl Cmd {
+    fn changes_bans(&self) -> bool {
+        matches!(
+            self,
+            Cmd::Ban(BanArgs {
+                cmd: BanCmd::Add { .. } | BanCmd::Rm { .. }
+            })
+        )
+    }
+}
+
+// Only root may reload the unit; for anyone else systemctl refuses quietly.
+fn sync_firewall() {
+    let _ = Command::new("systemctl")
+        .args([
+            "--no-ask-password",
+            "try-reload-or-restart",
+            "scrip-firewall.service",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 /// The largest per-element timeout nftables accepts, in seconds (it prints it
 /// back as 1157d9h46m39s). Anything above is `Error: value too large`.
 const NFT_MAX_TIMEOUT_SECS: i64 = 99_999_999;
@@ -135,6 +162,7 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
             purge,
             db,
         } => {
+            let cidr = ban_target(&cidr)?;
             let store = open_store(&db)?;
             let until = duration
                 .map(|d| {
@@ -157,7 +185,7 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
                 println!("banned {cidr} (purged {purged} pastes)");
             } else {
                 store
-                    .add_ban(&cidr.trunc().to_string(), reason.as_deref(), until)
+                    .add_ban(&cidr.to_string(), reason.as_deref(), until)
                     .map_err(|e| format!("ban add: {e}"))?;
                 println!("banned {cidr}");
             }
@@ -168,22 +196,50 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
             // Normalize so equivalent spellings (IPv6 compression, etc.) match
             // what add_ban stored; fall back to the raw string so unparseable
             // legacy rows stay removable.
-            let key = cidr
-                .parse::<ipnet::IpNet>()
-                .map(|n| n.trunc().to_string())
-                .unwrap_or(cidr);
+            let target = ban_target(&cidr).ok();
+            let key = target.map_or(cidr, |n| n.to_string());
             if store.remove_ban(&key).map_err(|e| format!("ban rm: {e}"))? {
-                println!("removed {key}");
-                Ok(())
-            } else {
+                let forgot = store
+                    .forget_offense(&key)
+                    .map_err(|e| format!("ban rm: {e}"))?;
+                println!(
+                    "removed {key}{}",
+                    if forgot { ", strikes reset" } else { "" }
+                );
+                return Ok(());
+            }
+            let wider: Vec<String> = match target {
+                Some(t) => store
+                    .ban_rows()
+                    .map_err(|e| format!("ban rm: {e}"))?
+                    .into_iter()
+                    .map(|(c, _, _)| c)
+                    .filter(|c| c.parse::<ipnet::IpNet>().is_ok_and(|n| n.contains(&t)))
+                    .collect(),
+                None => Vec::new(),
+            };
+            if wider.is_empty() {
                 Err(format!("no such ban: {key}"))
+            } else {
+                Err(format!(
+                    "no ban on {key} itself; it is inside {}, remove that instead",
+                    wider.join(", ")
+                ))
             }
         }
         BanCmd::List { db } => {
             let store = open_store(&db)?;
+            let now = scrip::intake::now_epoch();
+            let strikes = store
+                .offense_strikes()
+                .map_err(|e| format!("ban list: {e}"))?;
             for (cidr, reason, until) in store.ban_rows().map_err(|e| format!("ban list: {e}"))? {
-                let until = until.map_or("permanent".into(), |u| u.to_string());
-                println!("{cidr}\t{}\t{until}", reason.unwrap_or_default());
+                let n = strikes.get(&cidr).copied().unwrap_or(0);
+                println!(
+                    "{cidr}\t{}\t{}\tstrikes={n}",
+                    reason.unwrap_or_default(),
+                    expiry(until, now)
+                );
             }
             Ok(())
         }
@@ -193,12 +249,21 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
             // there, so this one verb treats a missing file as "no bans"
             // rather than an error; every other verb still refuses it, which
             // is what catches a typo'd path.
-            if !store_path(&db)?.exists() {
-                return Ok(());
-            }
-            let store = open_store(&db)?;
+            let rows = if store_path(&db)?.exists() {
+                open_store(&db)?
+                    .ban_rows()
+                    .map_err(|e| format!("ban export: {e}"))?
+            } else {
+                Vec::new()
+            };
+            // Flush first so `nft -f` also drops lifted bans. Nothing is
+            // printed before the rows are read: a failed export piped into
+            // nft must not empty the sets.
+            let mut out = String::from(
+                "flush set inet scrip scrip_bans4\nflush set inet scrip scrip_bans6\n",
+            );
             let now = scrip::intake::now_epoch();
-            for (cidr, _, until) in store.ban_rows().map_err(|e| format!("ban export: {e}"))? {
+            for (cidr, _, until) in rows {
                 if until.is_some_and(|u| u <= now) {
                     continue; // expired
                 }
@@ -210,12 +275,9 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
                     ipnet::IpNet::V4(_) => "scrip_bans4",
                 };
                 match until {
-                    // Hand the expiry to the kernel. The export only ever
-                    // adds elements and nothing ever removes them, so an
-                    // untimed element makes a 30-minute auto-ban permanent:
-                    // the row expires in SQLite while nftables keeps dropping
-                    // the source until someone reloads the ruleset by hand.
-                    // Both ban sets carry `flags interval,timeout` for this.
+                    // Hand the expiry to the kernel: between exports nothing
+                    // removes an element, so an untimed one would outlive
+                    // its row. Both ban sets carry `flags interval,timeout`.
                     //
                     // Clamped, because `nft -f` is atomic: one element over
                     // nft's ceiling fails the whole file and leaves the set
@@ -225,13 +287,16 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
                     // A clamped element expires early in the kernel only; the
                     // in-process list still holds the real duration, and the
                     // next export refreshes it.
-                    Some(u) => println!(
-                        "add element inet scrip {set} {{ {cidr} timeout {}s }}",
-                        (u - now).clamp(1, NFT_MAX_TIMEOUT_SECS)
-                    ),
-                    None => println!("add element inet scrip {set} {{ {cidr} }}"),
+                    Some(u) => {
+                        out += &format!(
+                            "add element inet scrip {set} {{ {cidr} timeout {}s }}\n",
+                            (u - now).clamp(1, NFT_MAX_TIMEOUT_SECS)
+                        )
+                    }
+                    None => out += &format!("add element inet scrip {set} {{ {cidr} }}\n"),
                 }
             }
+            print!("{out}");
             Ok(())
         }
     }
@@ -239,26 +304,25 @@ fn ban_cmd(cmd: BanCmd) -> Result<(), String> {
 
 fn rm_cmd(args: RmArgs) -> Result<(), String> {
     let store = open_store(&args.db)?;
+    let slug = paste_ref(&args.slug);
     // A takedown usually arrives as a URL. Under encryption at rest the
     // URL segment is the token and the row is keyed by its hash, so when a
     // token-length argument matches no row directly, try its id. The
     // 64-hex id from a log line keeps working as a plain argument.
-    let mut gone = store
-        .delete_paste(&args.slug)
-        .map_err(|e| format!("rm: {e}"))?;
-    if !gone && args.slug.len() == scrip::crypto::TOKEN_LEN {
+    let mut gone = store.delete_paste(slug).map_err(|e| format!("rm: {e}"))?;
+    if !gone && slug.len() == scrip::crypto::TOKEN_LEN {
         gone = store
-            .delete_paste(&scrip::crypto::token_id(&args.slug))
+            .delete_paste(&scrip::crypto::token_id(slug))
             .map_err(|e| format!("rm: {e}"))?;
     }
     if gone {
         // Takedown: push the secure_delete-zeroed pages out of the WAL and
         // freelist so the removed bytes leave disk.
         store.scrub().map_err(|e| format!("rm scrub: {e}"))?;
-        println!("removed {}", args.slug);
+        println!("removed {slug}");
         Ok(())
     } else {
-        Err(format!("no such paste: {}", args.slug))
+        Err(format!("no such paste: {slug}"))
     }
 }
 
@@ -318,6 +382,7 @@ fn main() {
         Cmd::Run(_) => init_tracing(false),
         _ => init_tracing(true),
     }
+    let changes_bans = cli.cmd.changes_bans();
     let result = match cli.cmd {
         Cmd::Run(a) => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -330,6 +395,9 @@ fn main() {
     if let Err(e) = result {
         eprintln!("scrip: {e}");
         std::process::exit(1);
+    }
+    if changes_bans {
+        sync_firewall();
     }
 }
 

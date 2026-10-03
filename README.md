@@ -216,18 +216,28 @@ nonzero exit, never a silent fallback to a default.
 ## Admin
 
 ```sh
-scrip rm <slug>                          # takedown
+scrip rm <slug or URL>                   # takedown
 scrip gc                                 # sweep expired pastes now
 scrip ban add 203.0.113.0/24 --purge     # ban, and delete their pastes
 scrip ban add 2001:db8::/32 --for 30d
-scrip ban list
-scrip ban rm 203.0.113.0/24
-scrip ban export | nft -f -        # push the list into the kernel
+scrip ban add 198.51.100.7               # a bare address is its /32
+scrip ban list                           # time left and strikes per ban
+scrip ban rm 198.51.100.7                # lift it and reset its strikes
+scrip ban export | nft -f -              # push the list into the kernel
 ```
 
 Bans apply within `ban_reload_secs` without a restart. `--purge` deletes the
 ban target's pastes in the same transaction as the ban. Both operations
 succeed or roll back together.
+
+A bare IPv6 address means its /64, the range auto-bans use. When `ban rm`
+finds no exact match, it names any wider ban that covers the address and
+leaves it alone.
+
+Run these as root or as the database owner. Run as root, `ban add` and
+`ban rm` also reload `scrip-firewall` so nftables follows. The NixOS module
+puts `scrip` on the PATH and links the config to `/etc/scrip/scrip.toml`, so
+no flags are needed there.
 
 ## Development
 

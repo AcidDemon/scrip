@@ -21,6 +21,8 @@ fn seed(db: &std::path::Path) -> scrip::store::Store {
     scrip::store::Store::open(db).unwrap()
 }
 
+const FLUSH: &str = "flush set inet scrip scrip_bans4\nflush set inet scrip scrip_bans6\n";
+
 #[test]
 fn ban_add_list_rm_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
@@ -82,6 +84,7 @@ fn ban_export_nft_emits_both_families_and_skips_expired() {
     s.add_ban("192.0.2.0/24", None, Some(10)).unwrap(); // expired long ago
     let (ok, out, _) = scrip(&["ban", "export"], &db);
     assert!(ok);
+    assert!(out.starts_with(FLUSH), "{out}");
     assert!(out.contains("add element inet scrip scrip_bans4 { 203.0.113.0/24 }"));
     assert!(out.contains("add element inet scrip scrip_bans6 { 2001:db8::/32 }"));
     assert!(
@@ -220,9 +223,8 @@ fn rm_takes_an_encryption_token_or_the_stored_id() {
 
 #[test]
 fn ban_export_carries_a_timeout_so_the_kernel_expires_it() {
-    // The export only ever adds elements and nothing ever removes them, so
-    // an untimed element outlives its row: a 30-minute auto-ban would keep
-    // dropping the source until someone reloaded the ruleset by hand.
+    // Between exports nothing removes an element, so an untimed one outlives
+    // its row.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("c.db");
     seed(&db);
@@ -266,7 +268,7 @@ fn ban_export_without_a_database_is_an_empty_success() {
     let db = dir.path().join("not-yet.db");
     let (ok, out, err) = scrip(&["ban", "export"], &db);
     assert!(ok, "{err}");
-    assert_eq!(out, "");
+    assert_eq!(out, FLUSH);
     assert!(!db.exists(), "export must not create the database");
 
     // Every other verb still refuses a path that does not exist, which is
@@ -293,4 +295,109 @@ fn ban_export_clamps_a_timeout_nft_would_reject() {
         out.contains("timeout 99999999s"),
         "an over-ceiling ban must clamp, got: {out}"
     );
+}
+
+#[test]
+fn ban_rm_takes_a_bare_address_and_resets_its_strikes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    let s = seed(&db);
+    s.add_ban("203.0.113.9/32", Some("auto: rate abuse"), Some(far()))
+        .unwrap();
+    s.record_offense("203.0.113.9/32", 1).unwrap();
+    s.add_ban("2001:db8:1:2::/64", Some("auto: rate abuse"), Some(far()))
+        .unwrap();
+
+    let (ok, out, err) = scrip(&["ban", "rm", "203.0.113.9"], &db);
+    assert!(ok, "{err}");
+    assert!(out.contains("removed 203.0.113.9/32"), "{out}");
+    assert!(out.contains("strikes reset"), "{out}");
+    assert!(s.offense_strikes().unwrap().is_empty());
+
+    let (ok, _, err) = scrip(&["ban", "rm", "2001:db8:1:2::77"], &db);
+    assert!(ok, "{err}");
+    assert!(s.ban_rows().unwrap().is_empty());
+}
+
+#[test]
+fn ban_rm_points_at_a_wider_ban_instead_of_lifting_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    let s = seed(&db);
+    s.add_ban("10.0.102.0/24", Some("spam"), None).unwrap();
+    let (ok, _, err) = scrip(&["ban", "rm", "10.0.102.1"], &db);
+    assert!(!ok, "a /32 lookup must not lift the /24");
+    assert!(err.contains("10.0.102.0/24"), "{err}");
+    assert_eq!(s.ban_rows().unwrap().len(), 1);
+}
+
+#[test]
+fn ban_add_takes_a_bare_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    let s = seed(&db);
+    let (ok, _, err) = scrip(&["ban", "add", "198.51.100.7"], &db);
+    assert!(ok, "{err}");
+    let (ok, _, err) = scrip(&["ban", "add", "2001:db8:5:6::1"], &db);
+    assert!(ok, "{err}");
+    let cidrs: Vec<String> = s.ban_rows().unwrap().into_iter().map(|r| r.0).collect();
+    assert_eq!(cidrs, ["198.51.100.7/32", "2001:db8:5:6::/64"]);
+}
+
+#[test]
+fn ban_list_shows_time_left_and_strikes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    let s = seed(&db);
+    let now = scrip::intake::now_epoch();
+    s.add_ban("203.0.113.9/32", Some("auto: rate abuse"), Some(now + 1800))
+        .unwrap();
+    s.record_offense("203.0.113.9/32", now).unwrap();
+    s.add_ban("198.51.100.0/24", Some("spam"), None).unwrap();
+    s.add_ban("192.0.2.0/24", None, Some(10)).unwrap();
+
+    let (ok, out, err) = scrip(&["ban", "list"], &db);
+    assert!(ok, "{err}");
+    let line = |cidr: &str| {
+        out.lines()
+            .find(|l| l.starts_with(cidr))
+            .unwrap_or_else(|| panic!("no {cidr} in: {out}"))
+            .to_string()
+    };
+    let auto = line("203.0.113.9/32");
+    assert!(auto.contains("in 29m") || auto.contains("in 30m"), "{auto}");
+    assert!(auto.ends_with("strikes=1"), "{auto}");
+    assert!(line("198.51.100.0/24").contains("permanent"), "{out}");
+    assert!(line("198.51.100.0/24").ends_with("strikes=0"), "{out}");
+    assert!(line("192.0.2.0/24").contains("expired"), "{out}");
+}
+
+#[test]
+fn rm_takes_the_url_as_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    let s = seed(&db);
+    s.insert_paste("takedown", b"bad", "::1", 1, far()).unwrap();
+    s.insert_paste("takedow2", b"bad", "::1", 1, far()).unwrap();
+    let (ok, _, err) = scrip(
+        &["rm", "https://paste.example.com/raw/takedown?lang=rust#L3"],
+        &db,
+    );
+    assert!(ok, "{err}");
+    assert!(!s.exists("takedown").unwrap());
+    let (ok, _, err) = scrip(&["rm", "https://paste.example.com/takedow2"], &db);
+    assert!(ok, "{err}");
+    assert!(!s.exists("takedow2").unwrap());
+}
+
+#[test]
+fn a_failed_export_prints_nothing_for_nft_to_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.db");
+    seed(&db);
+    let bad = dir.path().join("bad.toml");
+    std::fs::write(&bad, "bogus_key = 1\n").unwrap();
+    let (ok, out, _) = scrip(&["ban", "export", "--config", bad.to_str().unwrap()], &db);
+    assert!(!ok);
+    assert_eq!(out, "", "a piped `nft -f -` would apply this");
 }
