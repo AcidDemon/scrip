@@ -3,7 +3,7 @@ exclude = ["fuzz"]
 
 [package]
 name = "scrip"
-version = "0.1.2"
+version = "0.2.0"
 description = "Self-hosted terminal pastebin: pipe into a TCP port, get a link back"
 edition = "2021"
 license = "MIT"
