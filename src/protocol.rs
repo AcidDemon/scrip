@@ -44,28 +44,26 @@ pub async fn read_paste<R: AsyncRead + Unpin>(
     }
 }
 
-/// Every rule matches from the first byte, so any leading line lets a body
+/// Every rule reads only the first line, so any leading line lets a body
 /// through.
 pub fn probe_kind(body: &[u8]) -> Option<&'static str> {
-    // An SSLv2 hello must fill the body exactly: its fixed bytes alone also
-    // match UTF-16 text and CBOR.
-    let tls = match body {
-        [0x16, 0x03, 0x00..=0x04, _, _, 0x01, ..] => true,
-        [hi @ 0x80..=0xff, lo, 0x01, 0x00, 0x02, ..]
-        | [hi @ 0x80..=0xff, lo, 0x01, 0x03, 0x00..=0x04, ..] => {
-            (usize::from(hi & 0x7f) << 8 | usize::from(*lo)) + 2 == body.len()
-        }
-        _ => false,
-    };
+    let first = body.split(|&c| c == b'\n').next().unwrap_or_default();
+    // Text never holds NUL or these C0 controls; terminal output keeps BEL,
+    // BS, TAB, VT, FF, CR, SO, SI (tput sgr0 under tmux and screen ends in
+    // SI) and ESC. This catches TLS and nearly every binary service probe,
+    // nmap's included.
+    let binary = first
+        .iter()
+        .any(|&c| matches!(c, 0x00..=0x06 | 0x10..=0x1a | 0x1c..=0x1f));
     let ssh = (body.starts_with(b"SSH-2.0-") || body.starts_with(b"SSH-1."))
         && body.len() <= 255
         && body.iter().position(|&c| c == b'\n') == Some(body.len() - 1);
-    if tls {
-        Some("TLS")
+    if binary {
+        Some("binary")
     } else if ssh {
         Some("SSH")
-    } else if NMAP_PROBES.contains(&body) {
-        Some("scanner")
+    } else if body == b"HELP\r\n" {
+        Some("scanner") // nmap's one text probe the other rules miss
     } else {
         request_line(body)
     }
@@ -91,67 +89,6 @@ fn request_line(body: &[u8]) -> Option<&'static str> {
         )
     })
 }
-
-/// nmap's default-intensity (rarity <= 7) TCP probes the rules above miss.
-const NMAP_PROBES: &[&[u8]] = &[
-    // RPCCheck
-    b"\x80\0\0(r\xfe\x1d\x13\0\0\0\0\0\0\0\x02\0\x01\x86\xa0\0\x01\x97|\0\0\0\0\0\0\0\0\0\0\0\
-        \0\0\0\0\0\0\0\0\0",
-    // DNSVersionBindReqTCP
-    b"\0\x1e\0\x06\x01\0\0\x01\0\0\0\0\0\0\x07version\x04bind\0\0\x10\0\x03",
-    // DNSStatusRequestTCP
-    b"\0\x0c\0\0\x10\0\0\0\0\0\0\0\0\0",
-    // Help
-    b"HELP\r\n",
-    // TerminalServerCookie
-    b"\x03\0\0*%\xe0\0\0\0\0\0Cookie: mstshash=nmap\r\n\x01\0\x08\0\x03\0\0\0",
-    // Kerberos
-    b"\0\0\0qj\x81n0\x81k\xa1\x03\x02\x01\x05\xa2\x03\x02\x01\n\xa4\x81^0\\\xa0\x07\x03\x05\0P\
-        \x80\0\x10\xa2\x04\x1b\x02NM\xa3\x170\x15\xa0\x03\x02\x01\0\xa1\x0e0\x0c\x1b\x06krbtgt\
-        \x1b\x02NM\xa5\x11\x18\x0f19700101000000Z\xa7\x06\x02\x04\x1f\x1e\xb9\xd9\xa8\x170\x15\
-        \x02\x01\x12\x02\x01\x11\x02\x01\x10\x02\x01\x17\x02\x01\x01\x02\x01\x03\x02\x01\x02",
-    // SMBProgNeg
-    b"\0\0\0\xa4\xffSMBr\0\0\0\0\x08\x01@\0\0\0\0\0\0\0\0\0\0\0\0\0\0@\x06\0\0\x01\0\0\x81\0\
-        \x02PC NETWORK PROGRAM 1.0\0\x02MICROSOFT NETWORKS 1.03\0\x02MICROSOFT NETWORKS 3.0\0\
-        \x02LANMAN1.0\0\x02LM1.2X002\0\x02Samba\0\x02NT LANMAN 1.0\0\x02NT LM 0.12\0",
-    // X11Probe
-    b"l\0\x0b\0\0\0\0\0\0\0\0\0",
-    // LPDString
-    b"\x01default\n",
-    // LDAPSearchReq
-    b"0\x84\0\0\0-\x02\x01\x07c\x84\0\0\0$\x04\0\n\x01\0\n\x01\0\x02\x01\0\x02\x01d\x01\x01\0\
-        \x87\x0bobjectClass0\x84\0\0\0\0",
-    // LDAPBindReq
-    b"0\x0c\x02\x01\x01`\x07\x02\x01\x02\x04\0\x80\0",
-    // LANDesk-RC
-    b"TNMP\x04\0\0\0TNME\0\0\x04\0",
-    // TerminalServer
-    b"\x03\0\0\x0b\x06\xe0\0\0\0\0\0",
-    // NCP
-    b"DmdT\0\0\0\x17\0\0\0\x01\0\0\0\0\x11\x11\0\xff\x01\xff\x13",
-    // NotesRPC
-    b":\0\0\0/\0\0\0\x02\0\0@\x02\x0f\0\x01\0=\x05\0\0\0\0\0\0\0\0\0\0\0\0/\0\0\0\0\0\0\0\0\0@\
-        \x1f\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
-    // JavaRMI
-    b"JRMI\0\x02K",
-    // WMSRequest
-    b"\x01\0\0\xfd\xce\xfa\x0b\xb0\xa0\0\0\0MMS\x14\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x12\0\0\0\
-        \x01\0\x03\0\xf0\xf0\xf0\xf0\x0b\0\x04\0\x1c\0\x03\0N\0S\0P\0l\0a\0y\0e\0r\0/\x009\0.\
-        \x000\0.\x000\0.\x002\x009\x008\x000\0;\0 \0{\x000\x000\x000\x000\0A\0A\x000\x000\0-\
-        \x000\0A\x000\x000\0-\x000\x000\0a\x000\0-\0A\0A\x000\0A\0-\x000\x000\x000\x000\0A\x000\
-        \0A\0A\x000\0A\0A\x000\0}\0\0\0\xe0m\xdf_",
-    // oracle-tns
-    b"\0Z\0\0\x01\0\0\0\x016\x01,\0\0\x08\0\x7f\xff\x7f\x08\0\0\0\x01\0 \0:\0\0\0\0\0\0\0\0\0\
-        \0\0\0\0\0\0\x004\xe6\0\0\0\x01\0\0\0\0\0\0\0\0(CONNECT_DATA=(COMMAND=version))",
-    // ms-sql-s
-    b"\x12\x01\x004\0\0\0\0\0\0\x15\0\x06\x01\0\x1b\0\x01\x02\0\x1c\0\x0c\x03\0(\0\x04\xff\x08\
-        \0\x01U\0\0\0MSSQLServer\0H\x0f\0\0",
-    // afp
-    b"\0\x03\0\x01\0\0\0\0\0\0\0\x02\0\0\0\0\x0f\0",
-    // giop
-    b"GIOP\x01\0\x01\0$\0\0\0\0\0\0\0\x01\0\0\0\x01\0\0\0\x06\0\0\0abcdef\0\0\x04\0\0\0get\0\0\
-        \0\0\0",
-];
 
 #[cfg(test)]
 mod tests {
@@ -252,10 +189,6 @@ mod tests {
     fn probe_gate() {
         let chrome = b"GET / HTTP/1.1\r\nHost: 203.0.113.5:9999\r\nConnection: keep-alive\r\n\
             User-Agent: Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0 Safari/537.36\r\n\r\n";
-        let mut sslv2 = b"\x80\x2e\x01\0\x02\0\x15".to_vec();
-        sslv2.resize(0x2e + 2, 0);
-        let mut sslv23 = b"\x80\x9e\x01\x03\x01\0u".to_vec();
-        sslv23.resize(0x9e + 2, 0);
         let probes: &[(&[u8], &str)] = &[
             (b"GET / HTTP/1.0\r\n\r\n", "HTTP"),
             (b"OPTIONS / HTTP/1.0\r\n\r\n", "HTTP"),
@@ -270,20 +203,33 @@ mod tests {
                 b"OPTIONS sip:nm SIP/2.0\r\nVia: SIP/2.0/TCP nm;branch=foo\r\n",
                 "SIP",
             ),
-            (b"\x16\x03\0\0S\x01\0\0O\x03\0", "TLS"),
-            (b"\x16\x03\0\0i\x01\0\0e\x03\x03", "TLS"),
-            (b"\x16\x03\x01\x02\0\x01\0\x01\xfc\x03\x03", "TLS"),
-            (b"\x16\x03\x01\x06\xc0\x01\0\x06\xbc\x03\x03", "TLS"),
-            (&sslv2[..], "TLS"),
-            (&sslv23[..], "TLS"),
+            // TLS, SSLv2, SSLv2-compatible TLS ClientHellos
+            (b"\x16\x03\0\0S\x01\0\0O\x03\0", "binary"),
+            (b"\x16\x03\x01\x06\xc0\x01\0\x06\xbc\x03\x03", "binary"),
+            (b"\x80\x2e\x01\0\x02\0\x15", "binary"),
+            (b"\x80\x9e\x01\x03\x01\0u", "binary"),
+            // nmap RPCCheck, LPDString, JRMI, GIOP
+            (b"\x80\0\0(r\xfe\x1d\x13\0\0\0\0\0\0\0\x02", "binary"),
+            (b"\x01default\n", "binary"),
+            (b"JRMI\0\x02K", "binary"),
+            (b"GIOP\x01\0\x01\0$\0\0\0", "binary"),
+            // seen on a live door: TP-Link Kasa, PostgreSQL, Modbus, libp2p
+            (
+                b"\0\0\0\x1d\xd0\xf2\x81\xf8\x8b\xff\x9a\xf7\xd5\xef",
+                "binary",
+            ),
+            (b"\0\0\0\x09\0\x03\0\0\0", "binary"),
+            (b"\x04\xab\0\0\0\x05\x01+\x0e\x01\0", "binary"),
+            (b"\x13/multistream/1.0.0\n", "binary"),
+            // binary files too; the HTTP door takes those
+            (b"\x1f\x8b\x08\0\0\0\0\0\0\x03", "binary"),
+            (b"\x7fELF\x02\x01\x01\0", "binary"),
             (b"SSH-2.0-OpenSSH_9.6\r\n", "SSH"),
             (b"SSH-2.0-Go\r\n", "SSH"),
+            (b"HELP\r\n", "scanner"),
         ];
         for (body, kind) in probes {
             assert_eq!(probe_kind(body), Some(*kind), "{body:?}");
-        }
-        for body in NMAP_PROBES {
-            assert_eq!(probe_kind(body), Some("scanner"), "{body:?}");
         }
         for body in [
             &b"GET /api HTTP/1.1\n"[..],
@@ -293,22 +239,23 @@ mod tests {
             b"GET /\r\n",
             b"# notes\n\n- *one*\n",
             b"fn main() {}\n\x00binary too\xff",
-            b"\x1f\x8b\x08\0\0\0\0\0\0\x03",
-            b"\x7fELF\x02\x01\x01\0",
             b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR",
             "äöü\n".as_bytes(),
             "日本語\n".as_bytes(),
-            // truncated SSLv2 hello, UTF-16BE text, CBOR, msgpack
-            b"\x80\x2e\x01\0\x02\0\x15",
-            b"\xfe\xff\x01\x03\0n\0 \0c",
-            b"\x84\0\x01\0\x02",
-            b"\x82\0\x01\x03\0",
+            // Latin-1, CRLF, color, an OSC title, overstrike, a progress bar, a form feed
+            b"Gr\xfc\xdfe aus K\xf6ln\n",
+            b"line one\r\nline two\r\n",
+            b"\x1b[1;32mok\x1b[0m test\n",
+            b"\x1b[32mPASS\x1b[m\x0f build ok\n",
+            b"\x1b]0;user@host:~\x07$ ls\r\n",
+            b"N\x08NA\x08AM\x08ME\x08E\n",
+            b"  10%\r  50%\r 100%\n",
+            b"\x0cpage 2\x0b\n",
             b"SSH-2.0-OpenSSH_9.6\r\nmore\n",
             b"SSH-2.0-OpenSSH_9.6",
             b"SSH-Zugang: ssh -p 2222 admin@10.0.0.5\n",
             b"SSH-agent forwarding broken on bastion\n",
             b"HELP\n",
-            b"JRMI\0\x02K\n",
         ] {
             assert_eq!(probe_kind(body), None, "{body:?}");
         }

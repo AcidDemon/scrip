@@ -323,7 +323,7 @@ fn quota_full_refuses_with_message() {
     // Otherwise, eviction can make room by deleting pastes older than half
     // their retention while preserving fresh ones.
     let sv = start("max_paste_bytes = 400\nquota_bytes = 500\n");
-    let reply = paste(sv.port, &[1u8; 400]); // needs 528 bytes, quota is 500
+    let reply = paste(sv.port, &[b'a'; 400]); // needs 528 bytes, quota is 500
     assert!(reply.contains("storage full"), "reply: {reply:?}");
     // seed one old paste (created_at far past retention/2) behind the
     // server's back, the way a long-lived deployment accumulates them
@@ -341,9 +341,9 @@ fn quota_full_refuses_with_message() {
     drop(conn);
     // 228 (old) + 228 fresh fit the 500 quota; the second fresh paste must
     // evict the old one rather than refuse
-    let first = paste(sv.port, &[1u8; 100]);
+    let first = paste(sv.port, &[b'a'; 100]);
     assert!(first.starts_with("https://"), "reply: {first:?}");
-    let second = paste(sv.port, &[2u8; 100]);
+    let second = paste(sv.port, &[b'b'; 100]);
     assert!(second.starts_with("https://"), "reply: {second:?}");
     assert!(
         db_body(&sv, "old00001").is_none(),
@@ -354,7 +354,7 @@ fn quota_full_refuses_with_message() {
         "only the old paste should go"
     );
     // nothing old remains: the next paste is refused, the fresh ones survive
-    let third = paste(sv.port, &[3u8; 100]);
+    let third = paste(sv.port, &[b'c'; 100]);
     assert!(third.contains("storage full"), "reply: {third:?}");
     assert!(
         db_body(&sv, slug_of(&first)).is_some(),

@@ -74,18 +74,25 @@ and gets no reply.
 Scanners connect, send a probe and wait for an answer. Stored as is, every
 probe would become a paste, so the TCP path refuses a body that is one of:
 
+- a first line holding NUL or a C0 control that text never uses (anything
+  but BEL, BS, TAB, VT, FF, CR, SO, SI and ESC), which covers TLS and SSLv2
+  ClientHellos and nearly every binary service probe, nmap's included
 - a request line ending in CRLF, `METHOD target HTTP/x.y` or the same with
   `RTSP/` or `SIP/`, which covers browsers, the HTTP/2 preface, and nmap's
   HTTP, RTSP and SIP probes
-- a TLS ClientHello record, or an SSLv2-compatible ClientHello
 - an SSH version line with nothing after it
-- a byte-for-byte copy of one of nmap's default-intensity TCP probes
+- nmap's `HELP\r\n`
 
 The reply is `scrip: refused <kind> probe; prepend a line to paste it anyway`,
 and the log line names the kind and the source, never the bytes. Every rule
-starts matching at the first byte, so any line in front of the body, even an
-empty one, gets it through. The request-line rule wants CRLF because a
-terminal sends LF. A refusal adds no auto-ban strike, and there is no setting
+reads only the first line, so any line in front of the body, even an empty
+one, gets it through. The binary rule allows the controls that ANSI color,
+terminfo resets, terminal titles, overstrike and progress bars use, and it
+does not check UTF-8, so Latin-1 text passes. It does refuse most binary
+files, such as gzip or ELF, along with UTF-16 text, NUL-separated output
+like `git status -z`, and IRC logs that keep mIRC color codes in the first
+line. Raw reads serve `text/plain; charset=utf-8` anyway, and the HTTP path
+takes all of these. The request-line rule wants CRLF because a terminal sends LF. A refusal adds no auto-ban strike, and there is no setting
 for the check. The HTTP path has none of this: a POST body that looks like a
 request is ordinary content there.
 

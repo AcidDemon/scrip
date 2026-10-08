@@ -64,9 +64,10 @@ curl --data-binary @main.rs https://paste.example.com/
 
 Both write paths return the same thing, a URL on stdout.
 
-The TCP port refuses what port scanners send to identify a service: an HTTP,
-RTSP or SIP request line ending in CRLF, a TLS ClientHello, a lone SSH version
-line, and nmap's standard probes byte for byte. Those get a
+The TCP port refuses what port scanners send to identify a service: a first
+line with control bytes text does not use (TLS and binary protocol probes, but
+also most binary files and UTF-16 text), an HTTP, RTSP or SIP request line
+ending in CRLF, a lone SSH version line, and nmap's `HELP` probe. Those get a
 `scrip: refused ... probe` line back and nothing is stored. A body of nothing
 but whitespace is dropped without a reply. To paste one of these on purpose,
 put any line in front of it, or upload it with curl as above.
