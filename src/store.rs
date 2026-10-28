@@ -365,6 +365,9 @@ impl Store {
     /// Token-authorized delete: one statement, so a wrong token and a
     /// missing row are the same non-event. Old rows carry a NULL hash and
     /// can never match.
+    // ponytail: BLOB `=` is memcmp, not constant-time, on purpose. Both sides
+    // are SHA-256 and the caller picks only the preimage, so timing could leak
+    // hash prefixes of the caller's own guesses, never the token.
     pub fn delete_by_token(&self, slug: &str, token_hash: &[u8]) -> rusqlite::Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let size: Option<i64> = conn
