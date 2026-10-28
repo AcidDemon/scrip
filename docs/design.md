@@ -215,8 +215,10 @@ than either, so ciphertext can never be addressed by its id from a URL.
 
 This origin serves anonymous hostile content, so the viewer is built defensively:
 
-- `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'`
+- `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`
   on every HTML response
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()` on every HTML
+  response, since the viewer uses none of them
 - `Referrer-Policy: no-referrer` on every response: under `encrypt_at_rest` the
   URL path is the decryption key, and a default policy would hand it to every
   host a paste links out to

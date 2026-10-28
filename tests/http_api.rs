@@ -34,6 +34,10 @@ async fn headers_are_exact_on_every_route() {
         let (_, h, _) = get(sv.port, path);
         assert_eq!(h["content-security-policy"], CSP, "CSP on {path}");
         assert_eq!(h["x-frame-options"], "DENY", "x-frame-options on {path}");
+        assert_eq!(
+            h["permissions-policy"], "camera=(), microphone=(), geolocation=()",
+            "permissions-policy on {path}"
+        );
         assert_eq!(h["x-content-type-options"], "nosniff", "nosniff on {path}");
         assert!(h["content-type"].starts_with("text/html"), "html on {path}");
     }
@@ -50,6 +54,10 @@ async fn headers_are_exact_on_every_route() {
     let (st, h, _) = get(sv.port, "/assets/hl.js");
     assert_eq!(st, 200);
     assert_eq!(h["cache-control"], "public, max-age=31536000, immutable");
+    // paste plaintext must never land in a browser or proxy cache
+    let (st, h, _) = get(sv.port, &format!("/raw/{slug}"));
+    assert_eq!(st, 200);
+    assert_eq!(h["cache-control"], "no-store");
     let (st, _, _) = get(sv.port, "/healthz");
     assert_eq!(st, 200);
 

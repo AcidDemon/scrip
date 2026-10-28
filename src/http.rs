@@ -35,6 +35,7 @@ fn request_timeout() -> Duration {
 }
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=()";
 
 const LANDING: &str = include_str!("../assets/index.html");
 const SHELL: &str = include_str!("../assets/view.html");
@@ -205,6 +206,9 @@ fn html(status: StatusCode, body: impl Into<Body>) -> Response {
         .header(header::CONTENT_SECURITY_POLICY, CSP)
         // frame-ancestors again, for anything old enough to ignore CSP
         .header(header::X_FRAME_OPTIONS, "DENY")
+        // The viewer needs none of these, so a script that gets past the CSP
+        // shouldn't be able to prompt for them either.
+        .header("permissions-policy", PERMISSIONS_POLICY)
         .body(body.into())
         .unwrap()
 }
