@@ -1,5 +1,5 @@
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
@@ -45,16 +45,43 @@ const VIEW_JS: &str = include_str!("../assets/view.js");
 const LANDING_JS: &str = include_str!("../assets/landing.js");
 const LANDING_CSS: &str = include_str!("../assets/landing.css");
 const VIEW_CSS: &str = include_str!("../assets/view.css");
-const HL_JS: &str = include_str!("../assets/highlight.min.js");
-const NIX_JS: &str = include_str!("../assets/nix.min.js");
 const LOG_JS: &str = include_str!("../assets/log.js");
-const THEME_GITHUB_LIGHT: &str = include_str!("../assets/theme-github-light.css");
-const THEME_GITHUB_DARK: &str = include_str!("../assets/theme-github-dark.css");
-const THEME_SOLARIZED_LIGHT: &str = include_str!("../assets/theme-solarized-light.css");
-const THEME_SOLARIZED_DARK: &str = include_str!("../assets/theme-solarized-dark.css");
-const THEME_NORD: &str = include_str!("../assets/theme-nord.css");
-const THEME_CATPPUCCIN_LATTE: &str = include_str!("../assets/theme-catppuccin-latte.css");
-const THEME_CATPPUCCIN_MOCHA: &str = include_str!("../assets/theme-catppuccin-mocha.css");
+
+const JS: &str = "application/javascript; charset=utf-8";
+const CSS: &str = "text/css; charset=utf-8";
+
+/// Third-party files, served immutable under `/assets/<VENDORED_TAG>/`.
+#[rustfmt::skip]
+const VENDORED: [(&str, &str, &str); 9] = [
+    ("hl.js", JS, include_str!("../assets/highlight.min.js")),
+    ("nix.js", JS, include_str!("../assets/nix.min.js")),
+    ("theme-github-light.css", CSS, include_str!("../assets/theme-github-light.css")),
+    ("theme-github-dark.css", CSS, include_str!("../assets/theme-github-dark.css")),
+    ("theme-solarized-light.css", CSS, include_str!("../assets/theme-solarized-light.css")),
+    ("theme-solarized-dark.css", CSS, include_str!("../assets/theme-solarized-dark.css")),
+    ("theme-nord.css", CSS, include_str!("../assets/theme-nord.css")),
+    ("theme-catppuccin-latte.css", CSS, include_str!("../assets/theme-catppuccin-latte.css")),
+    ("theme-catppuccin-mocha.css", CSS, include_str!("../assets/theme-catppuccin-mocha.css")),
+];
+
+/// Hash of every vendored file. Swapping any of them moves all their URLs,
+/// so a browser holding last year's copy under `immutable` never reuses it.
+pub static VENDORED_TAG: LazyLock<String> = LazyLock::new(|| {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for (_, _, body) in VENDORED {
+        // Lengths too, so bytes moving between neighbours still change it.
+        h.update((body.len() as u64).to_le_bytes());
+        h.update(body);
+    }
+    h.finalize()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+});
+
+static SHELL_PAGE: LazyLock<String> =
+    LazyLock::new(|| SHELL.replace("{vendored}", &format!("/assets/{}", *VENDORED_TAG)));
 
 pub fn router(ctx: Arc<Ctx>) -> Router {
     let max = ctx.config.max_paste_bytes as usize;
@@ -62,6 +89,7 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/", get(landing).post(create))
         .route("/healthz", get(|| async { "" }))
         .route("/assets/{file}", get(asset))
+        .route("/assets/{tag}/{file}", get(vendored))
         .route("/raw/{slug}", get(raw))
         .route("/{slug}", get(view).delete(delete_paste))
         .layer(DefaultBodyLimit::max(max))
@@ -236,7 +264,7 @@ fn text(status: StatusCode, body: String) -> Response {
         .unwrap()
 }
 
-/// Vendored, version-pinned files: safe to cache forever.
+/// Vendored files under their content tag: safe to cache forever.
 fn asset_response(mime: &'static str, body: &'static str) -> Response {
     Response::builder()
         .status(StatusCode::OK)
@@ -411,41 +439,27 @@ async fn landing(State(ctx): State<Arc<Ctx>>) -> Response {
     )
 }
 
-/// Checks bans on static assets, including the 124 KB highlight.js bundle.
-/// Asset requests do not spend read tokens: a viewer can fetch up to seven,
-/// which would quickly exhaust the allowance for readers behind one NAT.
+/// Checks bans on first-party assets. Asset requests do not spend read
+/// tokens: a viewer can fetch up to seven, which would quickly exhaust the
+/// allowance for readers behind one NAT.
 async fn asset(Path(file): Path<String>, headers: HeaderMap, _gate: BanGate) -> Response {
     match file.as_str() {
-        "hl.js" => asset_response("application/javascript; charset=utf-8", HL_JS),
-        "view.js" => {
-            mutable_asset_response("application/javascript; charset=utf-8", VIEW_JS, &headers)
-        }
-        "view.css" => mutable_asset_response("text/css; charset=utf-8", VIEW_CSS, &headers),
-        "landing.js" => mutable_asset_response(
-            "application/javascript; charset=utf-8",
-            LANDING_JS,
-            &headers,
-        ),
-        "landing.css" => mutable_asset_response("text/css; charset=utf-8", LANDING_CSS, &headers),
-        "nix.js" => asset_response("application/javascript; charset=utf-8", NIX_JS),
-        "log.js" => {
-            mutable_asset_response("application/javascript; charset=utf-8", LOG_JS, &headers)
-        }
-        "theme-github-light.css" => asset_response("text/css; charset=utf-8", THEME_GITHUB_LIGHT),
-        "theme-github-dark.css" => asset_response("text/css; charset=utf-8", THEME_GITHUB_DARK),
-        "theme-solarized-light.css" => {
-            asset_response("text/css; charset=utf-8", THEME_SOLARIZED_LIGHT)
-        }
-        "theme-solarized-dark.css" => {
-            asset_response("text/css; charset=utf-8", THEME_SOLARIZED_DARK)
-        }
-        "theme-nord.css" => asset_response("text/css; charset=utf-8", THEME_NORD),
-        "theme-catppuccin-latte.css" => {
-            asset_response("text/css; charset=utf-8", THEME_CATPPUCCIN_LATTE)
-        }
-        "theme-catppuccin-mocha.css" => {
-            asset_response("text/css; charset=utf-8", THEME_CATPPUCCIN_MOCHA)
-        }
+        "view.js" => mutable_asset_response(JS, VIEW_JS, &headers),
+        "view.css" => mutable_asset_response(CSS, VIEW_CSS, &headers),
+        "landing.js" => mutable_asset_response(JS, LANDING_JS, &headers),
+        "landing.css" => mutable_asset_response(CSS, LANDING_CSS, &headers),
+        "log.js" => mutable_asset_response(JS, LOG_JS, &headers),
+        _ => text(StatusCode::NOT_FOUND, "not found\n".into()),
+    }
+}
+
+/// Vendored files, including the 124 KB highlight.js bundle, ban-checked
+/// like `asset`. Only the current tag answers: serving today's bytes under
+/// another tag would pin them in a browser cache for a year under a URL
+/// that promised different ones.
+async fn vendored(Path((tag, file)): Path<(String, String)>, _gate: BanGate) -> Response {
+    match VENDORED.iter().find(|(name, _, _)| *name == file) {
+        Some((_, mime, body)) if tag == *VENDORED_TAG => asset_response(mime, body),
         _ => text(StatusCode::NOT_FOUND, "not found\n".into()),
     }
 }
@@ -466,7 +480,7 @@ async fn view(State(ctx): State<Arc<Ctx>>, Path(slug): Path<String>, _gate: Read
                 .replace("{base_url}", &ctx.config.base_url)
                 .replace("{slug}", &slug),
         ),
-        Ok(Ok(Some(false))) => html(StatusCode::OK, SHELL),
+        Ok(Ok(Some(false))) => html(StatusCode::OK, SHELL_PAGE.as_str()),
         Ok(Ok(None)) => html(StatusCode::NOT_FOUND, NOT_FOUND_PAGE),
         _ => text(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n".into()),
     }

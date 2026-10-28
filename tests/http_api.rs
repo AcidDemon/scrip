@@ -3,6 +3,10 @@ use support::{far, get, post, request, serve};
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
 
+fn vendored(file: &str) -> String {
+    format!("/assets/{}/{file}", *scrip::http::VENDORED_TAG)
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn post_then_raw_roundtrip_byte_exact() {
     let sv = serve(|_| {}).await;
@@ -45,13 +49,13 @@ async fn headers_are_exact_on_every_route() {
     for path in [
         format!("/raw/{slug}"),
         "/healthz".into(),
-        "/assets/hl.js".into(),
+        vendored("hl.js"),
         "/assets/nope.js".into(),
     ] {
         let (_, h, _) = get(sv.port, &path);
         assert_eq!(h["x-content-type-options"], "nosniff", "nosniff on {path}");
     }
-    let (st, h, _) = get(sv.port, "/assets/hl.js");
+    let (st, h, _) = get(sv.port, &vendored("hl.js"));
     assert_eq!(st, 200);
     assert_eq!(h["cache-control"], "public, max-age=31536000, immutable");
     // paste plaintext must never land in a browser or proxy cache
@@ -61,17 +65,18 @@ async fn headers_are_exact_on_every_route() {
     let (st, _, _) = get(sv.port, "/healthz");
     assert_eq!(st, 200);
 
-    for path in [
-        "/assets/nix.js",
-        "/assets/theme-github-light.css",
-        "/assets/theme-github-dark.css",
-        "/assets/theme-solarized-light.css",
-        "/assets/theme-solarized-dark.css",
-        "/assets/theme-nord.css",
-        "/assets/theme-catppuccin-latte.css",
-        "/assets/theme-catppuccin-mocha.css",
+    for file in [
+        "nix.js",
+        "theme-github-light.css",
+        "theme-github-dark.css",
+        "theme-solarized-light.css",
+        "theme-solarized-dark.css",
+        "theme-nord.css",
+        "theme-catppuccin-latte.css",
+        "theme-catppuccin-mocha.css",
     ] {
-        let (st, h, _) = get(sv.port, path);
+        let path = vendored(file);
+        let (st, h, _) = get(sv.port, &path);
         assert_eq!(st, 200, "{path}");
         assert_eq!(
             h["cache-control"], "public, max-age=31536000, immutable",
@@ -111,9 +116,9 @@ async fn view_page_exists_and_missing_slug_is_404() {
     let (st, _, page) = get(sv.port, &format!("/{slug}"));
     assert_eq!(st, 200);
     let page = String::from_utf8(page).unwrap();
-    assert!(page.contains("/assets/hl.js"));
+    assert!(page.contains(&vendored("hl.js")));
     assert!(page.contains("/assets/view.js"));
-    assert!(page.contains("/assets/nix.js"));
+    assert!(page.contains(&vendored("nix.js")));
     // The bar the viewer script wires itself to. A shell that lost one of
     // these still renders, and the feature attached to it silently stops.
     for id in [
@@ -448,10 +453,10 @@ async fn banned_ip_cannot_read_view_or_raw() {
     let (st, _, _) = banned_get("/healthz");
     assert_eq!(st, 200);
     // Bans also block static assets, preventing repeated downloads of the bundle.
-    let (st, _, _) = banned_get("/assets/hl.js");
+    let (st, _, _) = banned_get(&vendored("hl.js"));
     assert_eq!(st, 403, "banned source must not pull assets either");
     // an unbanned client still gets them
-    let (st, _, _) = get(sv.port, "/assets/hl.js");
+    let (st, _, _) = get(sv.port, &vendored("hl.js"));
     assert_eq!(st, 200);
     // an unbanned client still reads
     let (st, _, _) = get(sv.port, &format!("/raw/{slug}"));
@@ -515,7 +520,7 @@ async fn app_assets_and_html_are_not_immutably_cached() {
     let (_, h, _) = get(sv.port, "/");
     assert_eq!(h["cache-control"], "no-cache", "html must revalidate");
     // vendored stays immutable
-    let (_, h, _) = get(sv.port, "/assets/hl.js");
+    let (_, h, _) = get(sv.port, &vendored("hl.js"));
     assert_eq!(h["cache-control"], "public, max-age=31536000, immutable");
 }
 
@@ -973,7 +978,7 @@ async fn mutable_assets_revalidate_by_etag() {
 #[tokio::test(flavor = "multi_thread")]
 async fn vendored_assets_stay_immutable() {
     let sv = serve(|_| {}).await;
-    let (st, h, _) = get(sv.port, "/assets/hl.js");
+    let (st, h, _) = get(sv.port, &vendored("hl.js"));
     assert_eq!(st, 200);
     // Vendored and versioned with the binary: cached for a year, so it must
     // not pay for a revalidation round trip.
@@ -981,6 +986,12 @@ async fn vendored_assets_stay_immutable() {
         h.get("cache-control").map(String::as_str),
         Some("public, max-age=31536000, immutable")
     );
+    // An immutable URL must name one set of bytes: no stale tag, no untagged
+    // path for a browser to keep the old file under.
+    for path in ["/assets/0000000000000000/hl.js", "/assets/hl.js"] {
+        let (st, _, _) = get(sv.port, path);
+        assert_eq!(st, 404, "{path}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

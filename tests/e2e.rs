@@ -719,14 +719,15 @@ fn full_journey_tcp_paste_to_browser_view() {
     assert!(head.contains("content-type: text/plain; charset=utf-8"));
     assert_eq!(raw, payload);
 
-    // assets the viewer needs actually resolve
-    for a in [
-        "/assets/hl.js",
-        "/assets/view.js",
-        "/assets/view.css",
-        // The default theme linked by view.html.
-        "/assets/theme-github-dark.css",
-    ] {
+    // every asset the served page links actually resolves (hl.js, nix.js,
+    // log.js, view.js, view.css, and the default theme)
+    let page = String::from_utf8_lossy(&page);
+    let linked: Vec<&str> = page
+        .split('"')
+        .filter(|s| s.starts_with("/assets/"))
+        .collect();
+    assert_eq!(linked.len(), 6, "{linked:?}");
+    for a in linked {
         let (st, _, body) = http_get(sv.http_port, a);
         assert_eq!(st, 200, "{a}");
         assert!(!body.is_empty(), "{a} empty");

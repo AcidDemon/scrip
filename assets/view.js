@@ -46,7 +46,8 @@
         document.head.appendChild(userLink);
       }
       userLink.disabled = false;
-      userLink.href = "/assets/" + t.file;
+      // Same tagged directory the server put the shipped theme in.
+      userLink.href = defaultLink.href.replace(/[^/]+$/, t.file);
     } else {
       defaultLink.disabled = false;
       if (userLink) userLink.disabled = true;
