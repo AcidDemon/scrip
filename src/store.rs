@@ -183,18 +183,12 @@ impl Store {
             rows.collect::<rusqlite::Result<_>>()?
         };
         for (cidr, reason, until) in rows {
-            let Ok(ipnet::IpNet::V6(net)) = cidr.parse::<ipnet::IpNet>() else {
+            let Ok(net @ ipnet::IpNet::V6(_)) = cidr.parse::<ipnet::IpNet>() else {
                 continue;
             };
-            if net.prefix_len() < 96 {
-                continue; // wider than the mapped range: genuinely v6
-            }
-            let Some(v4) = net.addr().to_ipv4_mapped() else {
-                continue;
+            let ipnet::IpNet::V4(v4net) = crate::policy::unmapped(net) else {
+                continue; // genuinely v6
             };
-            let v4net = ipnet::Ipv4Net::new(v4, net.prefix_len() - 96)
-                .expect("prefix - 96 <= 32")
-                .trunc();
             upsert_ban_extending(&tx, &v4net.to_string(), reason.as_deref(), until)?;
             tx.execute("DELETE FROM ban WHERE cidr = ?1", params![cidr])?;
         }
@@ -678,8 +672,11 @@ impl Store {
             let mut v = Vec::new();
             for row in rows {
                 let (slug, ip, size) = row?;
+                // Canonical, like every ban check: rows stored before
+                // canonicalization may hold ::ffff:a.b.c.d, which a v4 CIDR
+                // never contains.
                 if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
-                    if cidr.contains(&addr) {
+                    if cidr.contains(&addr.to_canonical()) {
                         v.push((slug, size));
                     }
                 }

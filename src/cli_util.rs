@@ -21,7 +21,7 @@ pub fn parse_duration_secs(s: &str) -> Result<i64, String> {
 /// Bare IPv6 addresses become their /64, the unit auto-bans use.
 pub fn ban_target(s: &str) -> Result<ipnet::IpNet, String> {
     if let Ok(net) = s.parse::<ipnet::IpNet>() {
-        return Ok(net.trunc());
+        return Ok(crate::policy::unmapped(net.trunc()));
     }
     let ip: std::net::IpAddr = s
         .parse()
@@ -65,6 +65,10 @@ mod tests {
         assert_eq!(t("10.0.102.0/24"), "10.0.102.0/24");
         assert_eq!(t("10.0.102.1/32"), "10.0.102.1/32");
         assert_eq!(t("203.0.113.9/24"), "203.0.113.0/24");
+        // mapped ranges become the v4 range they mean, or they'd never match
+        assert_eq!(t("::ffff:203.0.113.0/120"), "203.0.113.0/24");
+        assert_eq!(t("::ffff:203.0.113.9/128"), "203.0.113.9/32");
+        assert_eq!(t("::/0"), "::/0");
         assert!(ban_target("not-a-cidr").is_err());
     }
 

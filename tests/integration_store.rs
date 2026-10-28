@@ -418,11 +418,14 @@ fn ban_with_purge_is_atomic_and_scoped() {
         .unwrap();
     s.insert_paste("weird001", b"d", "not-an-ip", 1, far())
         .unwrap(); // unparseable: never purged
+    s.insert_paste("mapped01", b"e", "::ffff:203.0.113.7", 1, far())
+        .unwrap(); // pre-canonicalization row: still the same v4 author
     let net: ipnet::IpNet = "203.0.113.0/24".parse().unwrap();
     let purged = s.add_ban_with_purge(&net, Some("abuse"), None).unwrap();
-    assert_eq!(purged, 2);
+    assert_eq!(purged, 3);
     assert!(!s.exists("inside01").unwrap());
     assert!(!s.exists("inside02").unwrap());
+    assert!(!s.exists("mapped01").unwrap());
     assert!(s.exists("outside1").unwrap());
     assert!(s.exists("weird001").unwrap());
     assert_eq!(s.ban_rows().unwrap().len(), 1);

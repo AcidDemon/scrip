@@ -99,7 +99,9 @@ pub async fn accept_loop(
                     let ctx = ctx.clone();
                     tokio::spawn(async move {
                         let _permit = permit;
-                        handle(stream, peer.ip(), ctx).await;
+                        // Canonical like the HTTP door's client_ip, so v4
+                        // bans hold even if a listener ever goes dual-stack.
+                        handle(stream, peer.ip().to_canonical(), ctx).await;
                     });
                 }
                 Err(e) => {

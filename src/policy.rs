@@ -37,6 +37,22 @@ pub fn source_key48(ip: IpAddr) -> Option<Ipv6Addr> {
     }
 }
 
+/// The IPv4 net a CIDR inside ::ffff:0:0/96 stands for; anything else as is.
+/// Ban checks see canonical addresses and cross-family `contains` is always
+/// false, so a mapped-form ban would never match.
+pub fn unmapped(net: IpNet) -> IpNet {
+    match net {
+        IpNet::V6(n) if n.prefix_len() >= 96 => match n.addr().to_ipv4_mapped() {
+            Some(v4) => ipnet::Ipv4Net::new(v4, n.prefix_len() - 96)
+                .expect("prefix - 96 <= 32")
+                .trunc()
+                .into(),
+            None => net,
+        },
+        _ => net,
+    }
+}
+
 /// Which tier accepted or refused the request. Auto-ban strikes belong to
 /// the tier that refused: charging /48 refusals to individual /64s could
 /// spread an attack across 65,536 counters without any reaching the threshold.
