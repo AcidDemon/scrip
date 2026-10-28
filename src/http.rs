@@ -126,8 +126,12 @@ pub fn serve(
                                 let _ = conn.as_mut().await;
                             }
                             _ = tokio::time::sleep(CONNECTION_MAX_LIFETIME) => {
+                                // Mid-response, graceful_shutdown only turns
+                                // off keep-alive: a peer that stopped reading
+                                // would stall this await forever. Same 10s
+                                // cap as the shutdown drain.
                                 conn.as_mut().graceful_shutdown();
-                                let _ = conn.as_mut().await;
+                                let _ = tokio::time::timeout(Duration::from_secs(10), conn.as_mut()).await;
                             }
                         }
                     });
