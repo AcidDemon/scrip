@@ -196,6 +196,14 @@ Auto-bans appear in `scrip ban list` with reason `auto: rate abuse`.
 `scrip ban rm` lifts one early. Users behind the same NAT share a /32 and can
 reach these limits together; adjust the settings for your users.
 
+`max_pastes_per_source` also sets how many sources it takes to fill the store:
+`quota_bytes / (max_pastes_per_source × max_paste_bytes)`, which is 21 IPv4
+addresses or 3 IPv6 /48s with the defaults. A full store refuses uploads until
+those pastes are half of `retention_days` old, 15 days by default. If that is
+too few sources for your site, lower
+`max_pastes_per_source` or `max_paste_bytes`, or raise `quota_bytes`.
+`scrip ban add --purge <cidr>` removes a source's pastes in one step.
+
 ## Reverse proxy
 
 Run scrip on loopback behind a reverse proxy (nginx, Caddy, etc.) that handles TLS.

@@ -139,6 +139,15 @@ pastes are protected from eviction, so filling the quota cannot delete them.
 An upload is refused if it could not fit in an empty store or if eligible
 evictions cannot free enough space.
 
+The same protection lets a few sources fill the store on purpose. The
+per-source cap counts pastes, not bytes, so
+`quota_bytes / (max_pastes_per_source × max_paste_bytes)` sources can fill it
+between them. With the defaults that is 21 IPv4 addresses, which may share a
+/24, or 3 IPv6 /48s, since a /48 may hold 8× the per-/64 cap. Each gets there
+in about 16 minutes inside the rate limit, so no auto-ban fires, and uploads
+are refused until those pastes pass half their retention (15 days by default)
+or an operator removes them with `scrip ban add --purge`.
+
 Every paste gets `expires_at = created_at + retention`, 30 days by default. The
 reaper deletes expired rows on an interval and runs `PRAGMA incremental_vacuum`
 after a large delete. The read path filters on `expires_at` too, so nothing is
