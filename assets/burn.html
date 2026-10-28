@@ -6,16 +6,19 @@
 <title>scrip</title>
 <link rel="stylesheet" href="/assets/view.css">
 </head>
-<body>
+<body class="note">
 <pre><code>this paste self-destructs on first read
 
-the first request to the link below returns the
-paste and deletes it. anything that touches the
-link consumes it, including link previews and
-mail scanners, so open it only when you mean to.
+the button below shows the paste and deletes it.
+from a terminal, the first request to this url
+does the same:
 
   curl {base_url}/raw/{slug}
+
+anything that fetches that url consumes the paste,
+link previews and mail scanners included, so keep
+it out of chats and mail.
 </code></pre>
-<p><a href="/raw/{slug}">read now (this destroys the paste)</a></p>
+<form method="post" action="/raw/{slug}"><button type="submit">read now (this destroys the paste)</button></form>
 </body>
 </html>

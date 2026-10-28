@@ -90,7 +90,9 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/healthz", get(|| async { "" }))
         .route("/assets/{file}", get(asset))
         .route("/assets/{tag}/{file}", get(vendored))
-        .route("/raw/{slug}", get(raw))
+        // POST is the burn page's button: crawlers and mail scanners follow
+        // links, but never submit forms.
+        .route("/raw/{slug}", get(raw).post(raw))
         .route("/{slug}", get(view).delete(delete_paste))
         .layer(DefaultBodyLimit::max(max))
         .layer(middleware::from_fn(request_deadline))

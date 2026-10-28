@@ -647,6 +647,32 @@ async fn burn_paste_survives_viewing_and_dies_on_first_raw_read() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn burn_page_reads_by_form_post_not_by_link() {
+    let sv = serve(|_| {}).await;
+    let (_, _, body) = post_path(sv.port, "/?burn=1", b"secret");
+    let slug = slug_of(&body);
+    let (_, _, page) = get(sv.port, &format!("/{slug}"));
+    let page = String::from_utf8(page).unwrap();
+    assert!(
+        page.contains(&format!(r#"<form method="post" action="/raw/{slug}">"#)),
+        "{page}"
+    );
+    // A crawler or mail scanner follows every link on the page; none of
+    // them may be the raw URL, and following them all leaves the paste.
+    for href in page.split(r#"href=""#).skip(1) {
+        let href = href.split('"').next().unwrap();
+        assert!(!href.starts_with("/raw/"), "followable raw link: {href}");
+        get(sv.port, href);
+    }
+    // the button's POST claims it exactly once
+    let (st, _, raw) = post_path(sv.port, &format!("/raw/{slug}"), b"");
+    assert_eq!(st, 200);
+    assert_eq!(raw, b"secret");
+    let (st, _, _) = post_path(sv.port, &format!("/raw/{slug}"), b"");
+    assert_eq!(st, 404);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn delete_token_removes_the_paste() {
     let sv = serve(|_| {}).await;
     let (st, h, body) = post(sv.port, b"seekrit", "");

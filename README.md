@@ -111,8 +111,9 @@ seconds or an `s`, `m`, `h`, `d` suffix, clamped between one minute and
 `burn=1` makes the paste self-destruct on its first raw read. The viewer page
 warns instead of rendering, because rendering would consume the paste; so
 would a chat client's link preview, which is why the warning page exists.
-Share the viewer link, not the raw one: anything that touches `/raw/<slug>`
-eats the paste, mail scanners included.
+Its button reads the paste with a POST, which crawlers and mail scanners
+that follow links never send. Share the viewer link, not the raw one: any
+GET of `/raw/<slug>` eats the paste, mail scanners included.
 
 Every curl paste answers with an `X-Delete-Token` header, and presenting that
 token deletes the paste:
